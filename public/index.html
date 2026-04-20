@@ -506,7 +506,7 @@ function renderSparkline(canvasId, ticker) {
   if (!canvas) return;
   destroyChart(canvasId);
 
-  fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=3mo`)
+  fetch(`/api/chart?ticker=${ticker}`)
     .then(r => r.json())
     .then(data => {
       const result = data.chart.result[0];
