@@ -357,7 +357,7 @@ async function loadCardWMAs(id, ticker) {
 
 // RENDER TICKER CARD
 function renderTickerCard(ticker, index, isTop5, type, scores, top5list) {
-  const id = `card-${type}-${index}`;
+  const id = `card-${type}-${ticker}`;
   const name = getName(ticker);
   const score = scores && scores[ticker] ? scores[ticker] : null;
   const badge = isTop5
@@ -451,13 +451,8 @@ function renderSignals(data) {
     const allTickers = [...(data.trend || []), ...(data.turnaround || [])];
     allTickers.forEach((ticker, i) => {
       const type = (data.trend || []).includes(ticker) ? 'trend' : 'turnaround';
-      const list = type === 'trend' ? (data.trend || []) : (data.turnaround || []);
-      const top5 = (data.top5 || []).includes(ticker);
-      const index = top5
-        ? (data.top5 || []).indexOf(ticker)
-        : list.filter(t => !(data.top5 || []).includes(t)).indexOf(ticker);
-      const id = `card-${type}-${index}`;
-      setTimeout(() => loadCardWMAs(id, ticker), i * 80);
+      const id = `card-${type}-${ticker}`;
+      setTimeout(() => loadCardWMAs(id, ticker), i * 100);
     });
   }, 200);
 }
