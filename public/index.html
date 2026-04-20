@@ -465,7 +465,7 @@
       <div class="stat-value amber" id="turnaroundCount">—</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Universe</div>
+      <div class="stat-label">S&amp;P 500</div>
       <div class="stat-value muted">500</div>
     </div>
   </div>
@@ -546,7 +546,11 @@ async function loadCardWMAs(id, ticker) {
     const wma200 = d.wma200 ? d.wma200.filter(v => v !== null).slice(-1)[0] : null;
 
     const priceEl = document.getElementById(`cp-${id}`);
-    if (priceEl) priceEl.textContent = '$' + price.toFixed(2);
+    if (priceEl) {
+      priceEl.textContent = '$' + price.toFixed(2);
+      const prevClose = d.closes && d.closes.length >= 2 ? d.closes[d.closes.length - 2] : null;
+      if (prevClose) priceEl.style.color = price >= prevClose ? '#00ff88' : '#ff4466';
+    }
 
     const wmaEl = document.getElementById(`wma-${id}`);
     if (!wmaEl) return;
