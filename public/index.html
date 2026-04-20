@@ -633,7 +633,7 @@ function toggleCard(id, ticker) {
   }
 }
 
-function renderTickerCard(ticker, index, isTop5, type) {
+function renderTickerCard(ticker, index, isTop5, type, scores) {
   const id = `card-${type}-${index}`;
   const name = getName(ticker);
   const rankHtml = isTop5
@@ -653,7 +653,7 @@ function renderTickerCard(ticker, index, isTop5, type) {
         <div class="ticker-right">
           <div class="ticker-chips">
             <span class="chip good">${type === 'trend' ? 'Bounce' : 'Recovery'}</span>
-            <span class="chip">${type === 'trend' ? 'Uptrend' : 'Fallen Angel'}</span>
+            ${isTop5 && scores && scores[ticker] ? `<span class="chip warn">${scores[ticker]}/100</span>` : ''}
           </div>
           <span class="expand-arrow">▼</span>
         </div>
@@ -674,7 +674,7 @@ function renderTickerCard(ticker, index, isTop5, type) {
     </div>`;
 }
 
-function renderSection(title, subtitle, icon, colorClass, list, type) {
+function renderSection(title, subtitle, icon, colorClass, list, type, top5list, scores) {
   if (!list || list.length === 0) {
     return `
       <div class="section-header">
@@ -693,8 +693,8 @@ function renderSection(title, subtitle, icon, colorClass, list, type) {
       </div>`;
   }
 
-  const top5 = list.slice(0, 5);
-  const rest = list.slice(5);
+  const top5 = top5list && top5list.length > 0 ? list.filter(t => top5list.includes(t)) : list.slice(0, 5);
+  const rest = list.filter(t => !top5.includes(t));
 
   let html = `
     <div class="section-header">
@@ -711,14 +711,14 @@ function renderSection(title, subtitle, icon, colorClass, list, type) {
   if (top5.length > 0) {
     html += `<div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Top Picks</div>`;
     html += `<div class="ticker-grid">`;
-    top5.forEach((t, i) => { html += renderTickerCard(t, i, true, type); });
+    top5.forEach((t, i) => { html += renderTickerCard(t, i, true, type, scores); });
     html += `</div>`;
   }
 
   if (rest.length > 0) {
     html += `<div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:16px 0 8px">Also Meeting Criteria</div>`;
     html += `<div class="ticker-grid">`;
-    rest.forEach((t, i) => { html += renderTickerCard(t, i + top5.length, false, type); });
+    rest.forEach((t, i) => { html += renderTickerCard(t, i + top5.length, false, type, scores); });
     html += `</div>`;
   }
 
@@ -745,8 +745,8 @@ async function loadData() {
         <p>No signals today — markets may be closed or conditions not met.</p>
       </div>`;
     } else {
-      html += renderSection('Trend Radar', 'Confirmed bounce in uptrend', '📈', 'green', data.trend || [], 'trend');
-      html += renderSection('Fallen Angels', 'Quality stocks in recovery', '🔄', 'amber', data.turnaround || [], 'turnaround');
+      html += renderSection('Trend Radar', 'Confirmed bounce in uptrend', '📈', 'green', data.trend || [], 'trend', data.top5 || [], data.scores || {});
+      html += renderSection('Fallen Angels', 'Quality stocks in recovery', '🔄', 'amber', data.turnaround || [], 'turnaround', data.top5 || [], data.scores || {});
     }
 
     document.getElementById('mainContent').innerHTML = html;
