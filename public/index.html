@@ -509,52 +509,77 @@ function renderSparkline(canvasId, ticker) {
   fetch(`/api/chart?ticker=${ticker}`)
     .then(r => r.json())
     .then(data => {
-      const result = data.chart.result[0];
-      const closes = result.indicators.quote[0].close.filter(Boolean);
-      const timestamps = result.timestamp;
+      const closes = data.closes.filter(c => c !== null);
+      const timestamps = data.timestamps.slice(-closes.length);
       const labels = timestamps.map(t => {
         const d = new Date(t * 1000);
         return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
       });
 
-      const color = closes[closes.length-1] >= closes[0] ? '#00ff88' : '#ff4466';
+      const first = closes[0];
+      const last = closes[closes.length - 1];
+      const color = last >= first ? '#00ff88' : '#ff4466';
+      const bgColor = last >= first ? 'rgba(0,255,136,0.05)' : 'rgba(255,68,102,0.05)';
 
       chartInstances[canvasId] = new Chart(canvas, {
         type: 'line',
         data: {
-          labels,
+          labels: labels,
           datasets: [{
             data: closes,
             borderColor: color,
-            borderWidth: 1.5,
+            borderWidth: 2,
             fill: true,
-            backgroundColor: color === '#00ff88' ? 'rgba(0,255,136,0.05)' : 'rgba(255,68,102,0.05)',
+            backgroundColor: bgColor,
             pointRadius: 0,
-            tension: 0.3
+            tension: 0.2
           }]
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: { legend: { display: false }, tooltip: {
-            callbacks: {
-              label: ctx => `$${ctx.parsed.y.toFixed(2)}`
+          animation: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              mode: 'index',
+              intersect: false,
+              callbacks: {
+                label: ctx => `$${ctx.parsed.y.toFixed(2)}`
+              }
             }
-          }},
+          },
           scales: {
-            x: { display: false },
+            x: {
+              display: true,
+              ticks: {
+                color: '#444',
+                font: { size: 9 },
+                maxTicksLimit: 6,
+                maxRotation: 0
+              },
+              grid: { display: false }
+            },
             y: {
               display: true,
-              grid: { color: 'rgba(255,255,255,0.04)' },
-              ticks: { color: '#555', font: { size: 9 }, maxTicksLimit: 4,
-                callback: v => '$' + v.toFixed(0) }
+              position: 'right',
+              ticks: {
+                color: '#444',
+                font: { size: 9 },
+                maxTicksLimit: 4,
+                callback: v => '$' + v.toFixed(0)
+              },
+              grid: { color: 'rgba(255,255,255,0.03)' }
             }
           }
         }
       });
     })
-    .catch(() => {
-      if (canvas) canvas.parentElement.innerHTML = '<p style="color:#555;font-size:11px;text-align:center;padding:20px">Chart unavailable</p>';
+    .catch(err => {
+      console.error('Chart error:', err);
+      if (canvas && canvas.parentElement) {
+        canvas.parentElement.innerHTML = '<p style="color:#555;font-size:11px;text-align:center;padding:40px 0">Chart unavailable</p>';
+      }
     });
 }
 
