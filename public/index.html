@@ -521,22 +521,6 @@ function renderSparkline(canvasId, ticker) {
       const priceColor = last >= first ? '#00ff88' : '#ff4466';
       const bgColor = last >= first ? 'rgba(0,255,136,0.05)' : 'rgba(255,68,102,0.05)';
 
-      function calcWMA(arr, period) {
-        return arr.map((_, i) => {
-          if (i < period - 1) return null;
-          let num = 0, den = 0;
-          for (let j = 0; j < period; j++) {
-            const w = j + 1;
-            num += arr[i - (period - 1 - j)] * w;
-            den += w;
-          }
-          return num / den;
-        });
-      }
-      const wma20 = calcWMA(closes, 20);
-      const wma50 = calcWMA(closes, 50);
-      const wma200 = calcWMA(closes, 200);
-
       chartInstances[canvasId] = new Chart(canvas, {
         type: 'line',
         data: {
@@ -555,10 +539,9 @@ function renderSparkline(canvasId, ticker) {
             },
             {
               label: 'WMA20',
-              data: wma20,
+              data: data.wma20,
               borderColor: '#4488ff',
               borderWidth: 1,
-              borderDash: [],
               fill: false,
               pointRadius: 0,
               tension: 0.2,
@@ -566,7 +549,7 @@ function renderSparkline(canvasId, ticker) {
             },
             {
               label: 'WMA50',
-              data: wma50,
+              data: data.wma50,
               borderColor: '#aa88ff',
               borderWidth: 1,
               fill: false,
@@ -576,7 +559,7 @@ function renderSparkline(canvasId, ticker) {
             },
             {
               label: 'WMA200',
-              data: wma200,
+              data: data.wma200,
               borderColor: '#ff6644',
               borderWidth: 1.5,
               fill: false,
