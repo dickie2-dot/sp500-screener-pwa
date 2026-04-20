@@ -18,27 +18,30 @@ def get_sp500_tickers():
 
 
 def download_data(tickers):
+    print("Downloading data via Tiingo...")
+    api_token = os.environ.get("TIINGO_API_TOKEN")
+    headers = {"Content-Type": "application/json", "Authorization": f"Token {api_token}"}
     frames = {}
-    headers = {"User-Agent": "Mozilla/5.0"}
+    end = datetime.utcnow().strftime("%Y-%m-%d")
+    start = (datetime.utcnow() - pd.Timedelta(days=400)).strftime("%Y-%m-%d")
     for i, ticker in enumerate(tickers):
         try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1y"
+            url = f"https://api.tiingo.com/tiingo/daily/{ticker}/prices?startDate={start}&endDate={end}&resampleFreq=daily"
             r = requests.get(url, headers=headers, timeout=10)
             data = r.json()
-            result = data["chart"]["result"][0]
-            timestamps = result["timestamp"]
-            closes = result["indicators"]["quote"][0]["close"]
-            volumes = result["indicators"]["quote"][0]["volume"]
-            dates = pd.to_datetime(timestamps, unit="s", utc=True).tz_convert("America/New_York").normalize()
-            df = pd.DataFrame({"Close": closes, "Volume": volumes}, index=dates)
+            if not isinstance(data, list) or len(data) == 0:
+                continue
+            df = pd.DataFrame(data)
+            df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+            df = df.set_index("date")[["close", "volume"]].rename(columns={"close": "Close", "volume": "Volume"})
             df = df.dropna()
             if not df.empty:
                 frames[ticker] = df
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARN] {ticker}: {e}")
         if i % 50 == 0 and i > 0:
             print(f"  ...{i}/{len(tickers)} done")
-            time.sleep(2)
+            time.sleep(0.5)
     print(f"Download complete. Got {len(frames)} tickers.")
     return frames
 
