@@ -217,12 +217,48 @@ def main():
     print(f"\nTrend hits: {len(trend_hits)}")
     print(f"Fallen Angel hits: {len(turnaround_hits)}")
 
+    # Market breadth - % of stocks above their 200 WMA
+    above_200 = 0
+    risers = []
+    fallers = []
+    for ticker, df in frames.items():
+        try:
+            close = df["Close"].squeeze()
+            if len(close) < 200:
+                continue
+            wma200 = compute_wma(close, 200)
+            price = float(close.iloc[-1])
+            w200 = float(wma200.iloc[-1])
+            if not pd.isna(w200):
+                if price > w200:
+                    above_200 += 1
+                if len(close) >= 2:
+                    prev = float(close.iloc[-2])
+                    if prev > 0:
+                        pct_change = (price - prev) / prev * 100
+                        risers.append((pct_change, ticker))
+                        fallers.append((pct_change, ticker))
+        except:
+            pass
+
+    total_valid = len(frames)
+    breadth_pct = round(above_200 / total_valid * 100, 1) if total_valid > 0 else 0
+    risers.sort(reverse=True)
+    fallers.sort()
+    top_risers = [{"ticker": t, "change": round(c, 2)} for c, t in risers[:5]]
+    top_fallers = [{"ticker": t, "change": round(c, 2)} for c, t in fallers[:5]]
+
+    print(f"Breadth: {breadth_pct}% above WMA200")
+
     data = {
         "date": datetime.utcnow().strftime("%Y-%m-%d"),
         "trend": sorted(trend_hits),
         "turnaround": sorted(turnaround_hits),
         "trend_count": len(trend_hits),
-        "turnaround_count": len(turnaround_hits)
+        "turnaround_count": len(turnaround_hits),
+        "breadth_pct": breadth_pct,
+        "top_risers": top_risers,
+        "top_fallers": top_fallers
     }
 
     push_to_edge_config(data)
