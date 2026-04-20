@@ -1,10 +1,4 @@
 {
-  "functions": {
-    "api/screen.py": {
-      "runtime": "vercel-python@latest",
-      "maxDuration": 300
-    }
-  },
   "crons": [
     {
       "path": "/api/screen",

@@ -169,36 +169,41 @@ def write_to_edge_config(data):
     return r.status_code
 
 
-def handler(request):
-    tickers = get_sp500_tickers()
-    frames  = download_data(tickers)
+from http.server import BaseHTTPRequestHandler
 
-    trend_hits      = []
-    turnaround_hits = []
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        tickers = get_sp500_tickers()
+        frames  = download_data(tickers)
 
-    for ticker in tickers:
-        result = screen_ticker(ticker, frames)
-        if result:
-            if result[0] == "trend":
-                trend_hits.append(ticker)
-            else:
-                turnaround_hits.append(ticker)
+        trend_hits      = []
+        turnaround_hits = []
 
-    data = {
-        "date": datetime.utcnow().strftime("%Y-%m-%d"),
-        "trend": sorted(trend_hits),
-        "turnaround": sorted(turnaround_hits),
-        "trend_count": len(trend_hits),
-        "turnaround_count": len(turnaround_hits)
-    }
+        for ticker in tickers:
+            result = screen_ticker(ticker, frames)
+            if result:
+                if result[0] == "trend":
+                    trend_hits.append(ticker)
+                else:
+                    turnaround_hits.append(ticker)
 
-    status = write_to_edge_config(data)
+        data = {
+            "date": datetime.utcnow().strftime("%Y-%m-%d"),
+            "trend": sorted(trend_hits),
+            "turnaround": sorted(turnaround_hits),
+            "trend_count": len(trend_hits),
+            "turnaround_count": len(turnaround_hits)
+        }
 
-    return {
-        "statusCode": 200,
-        "body": json.dumps({
+        status = write_to_edge_config(data)
+
+        response = json.dumps({
             "success": True,
             "edge_config_write_status": status,
             "results": data
-        })
-    }
+        }).encode()
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(response)
