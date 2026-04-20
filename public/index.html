@@ -675,7 +675,7 @@ function renderSection(title, subtitle, icon, colorClass, list, type) {
   if (rest.length > 0) {
     html += `<div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:16px 0 8px">Also Meeting Criteria</div>`;
     html += `<div class="ticker-grid">`;
-    rest.forEach((t, i) => { html += renderTickerCard(t, i, false, type); });
+    rest.forEach((t, i) => { html += renderTickerCard(t, i + top5.length, false, type); });
     html += `</div>`;
   }
 
