@@ -18,30 +18,33 @@ def get_sp500_tickers():
 
 
 def download_data(tickers):
-    print("Downloading data via Tiingo...")
-    api_token = os.environ.get("TIINGO_API_TOKEN")
-    headers = {"Content-Type": "application/json", "Authorization": f"Token {api_token}"}
+    print("Downloading data via Polygon.io in batches...")
+    api_key = os.environ.get("POLYGON_API_KEY")
     frames = {}
     end = datetime.utcnow().strftime("%Y-%m-%d")
     start = (datetime.utcnow() - pd.Timedelta(days=400)).strftime("%Y-%m-%d")
-    for i, ticker in enumerate(tickers):
-        try:
-            url = f"https://api.tiingo.com/tiingo/daily/{ticker}/prices?startDate={start}&endDate={end}&resampleFreq=daily"
-            r = requests.get(url, headers=headers, timeout=10)
-            data = r.json()
-            if not isinstance(data, list) or len(data) == 0:
-                continue
-            df = pd.DataFrame(data)
-            df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
-            df = df.set_index("date")[["close", "volume"]].rename(columns={"close": "Close", "volume": "Volume"})
-            df = df.dropna()
-            if not df.empty:
-                frames[ticker] = df
-        except Exception as e:
-            print(f"[WARN] {ticker}: {e}")
-        if i % 50 == 0 and i > 0:
-            print(f"  ...{i}/{len(tickers)} done")
-            time.sleep(0.5)
+    chunk_size = 100
+    chunks = [tickers[i:i+chunk_size] for i in range(0, len(tickers), chunk_size)]
+    for ci, chunk in enumerate(chunks):
+        for ticker in chunk:
+            try:
+                url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}"
+                params = {"adjusted": "true", "sort": "asc", "limit": 500, "apiKey": api_key}
+                r = requests.get(url, params=params, timeout=15)
+                data = r.json()
+                if data.get("status") not in ("OK", "DELAYED") or not data.get("results"):
+                    continue
+                results = data["results"]
+                dates = pd.to_datetime([x["t"] for x in results], unit="ms", utc=True).tz_convert("America/New_York").normalize()
+                closes = [x["c"] for x in results]
+                volumes = [x["v"] for x in results]
+                df = pd.DataFrame({"Close": closes, "Volume": volumes}, index=dates).dropna()
+                if not df.empty:
+                    frames[ticker] = df
+            except Exception as e:
+                print(f"[WARN] {ticker}: {e}")
+        print(f"  ...{min((ci+1)*chunk_size, len(tickers))}/{len(tickers)} done")
+        time.sleep(12)
     print(f"Download complete. Got {len(frames)} tickers.")
     return frames
 
