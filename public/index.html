@@ -518,22 +518,73 @@ function renderSparkline(canvasId, ticker) {
 
       const first = closes[0];
       const last = closes[closes.length - 1];
-      const color = last >= first ? '#00ff88' : '#ff4466';
+      const priceColor = last >= first ? '#00ff88' : '#ff4466';
       const bgColor = last >= first ? 'rgba(0,255,136,0.05)' : 'rgba(255,68,102,0.05)';
+
+      function calcWMA(arr, period) {
+        return arr.map((_, i) => {
+          if (i < period - 1) return null;
+          let num = 0, den = 0;
+          for (let j = 0; j < period; j++) {
+            const w = j + 1;
+            num += arr[i - (period - 1 - j)] * w;
+            den += w;
+          }
+          return num / den;
+        });
+      }
+      const wma20 = calcWMA(closes, 20);
+      const wma50 = calcWMA(closes, 50);
+      const wma200 = calcWMA(closes, 200);
 
       chartInstances[canvasId] = new Chart(canvas, {
         type: 'line',
         data: {
           labels: labels,
-          datasets: [{
-            data: closes,
-            borderColor: color,
-            borderWidth: 2,
-            fill: true,
-            backgroundColor: bgColor,
-            pointRadius: 0,
-            tension: 0.2
-          }]
+          datasets: [
+            {
+              label: 'Price',
+              data: closes,
+              borderColor: priceColor,
+              borderWidth: 2,
+              fill: true,
+              backgroundColor: bgColor,
+              pointRadius: 0,
+              tension: 0.2,
+              order: 1
+            },
+            {
+              label: 'WMA20',
+              data: wma20,
+              borderColor: '#4488ff',
+              borderWidth: 1,
+              borderDash: [],
+              fill: false,
+              pointRadius: 0,
+              tension: 0.2,
+              order: 2
+            },
+            {
+              label: 'WMA50',
+              data: wma50,
+              borderColor: '#aa88ff',
+              borderWidth: 1,
+              fill: false,
+              pointRadius: 0,
+              tension: 0.2,
+              order: 3
+            },
+            {
+              label: 'WMA200',
+              data: wma200,
+              borderColor: '#ff6644',
+              borderWidth: 1.5,
+              fill: false,
+              pointRadius: 0,
+              tension: 0.2,
+              order: 4
+            }
+          ]
         },
         options: {
           responsive: true,
@@ -574,6 +625,10 @@ function renderSparkline(canvasId, ticker) {
           }
         }
       });
+      const priceEl = document.getElementById('price-' + canvasId.replace('chart-',''));
+      if (priceEl && data.last_price) {
+        priceEl.textContent = '$' + data.last_price.toFixed(2);
+      }
     })
     .catch(err => {
       console.error('Chart error:', err);
@@ -609,7 +664,7 @@ function renderTickerCard(ticker, index, isTop5, type) {
           ${rankHtml}
           <div class="ticker-info">
             <div class="ticker-symbol">${ticker}</div>
-            <div class="ticker-name">${name}</div>
+            <div class="ticker-name">${name} <span id="price-card-${type}-${index}" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--green);margin-left:6px">—</span></div>
           </div>
         </div>
         <div class="ticker-right">
@@ -621,6 +676,11 @@ function renderTickerCard(ticker, index, isTop5, type) {
         </div>
       </div>
       <div class="ticker-expanded">
+        <div style="display:flex;gap:14px;margin-bottom:8px;flex-wrap:wrap">
+          <span style="font-size:9px;color:#4488ff;display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:16px;height:2px;background:#4488ff;border-radius:1px"></span>WMA20</span>
+          <span style="font-size:9px;color:#aa88ff;display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:16px;height:2px;background:#aa88ff;border-radius:1px"></span>WMA50</span>
+          <span style="font-size:9px;color:#ff6644;display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:16px;height:2px;background:#ff6644;border-radius:1px"></span>WMA200</span>
+        </div>
         <div class="chart-container">
           <canvas id="chart-${id}"></canvas>
         </div>
