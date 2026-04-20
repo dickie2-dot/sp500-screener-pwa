@@ -24,7 +24,7 @@ class handler(BaseHTTPRequestHandler):
         params = parse_qs(parsed.query)
         ticker = params.get('ticker', ['AAPL'])[0].upper()
 
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1y"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2y"
         headers = {"User-Agent": "Mozilla/5.0"}
 
         try:
