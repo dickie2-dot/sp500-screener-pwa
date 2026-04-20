@@ -189,6 +189,14 @@ def main():
     tickers = get_sp500_tickers()
     frames  = download_data(tickers)
 
+    # Diagnostic: check a known ticker
+    if "NKE" in frames:
+        df = frames["NKE"]
+        close = df["Close"].squeeze()
+        print(f"NKE sample - rows: {len(close)}, last price: {float(close.iloc[-1]):.2f}")
+    else:
+        print("NKE not in frames - possible download issue")
+
     trend_hits      = []
     turnaround_hits = []
 
