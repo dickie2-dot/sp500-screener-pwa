@@ -6,14 +6,10 @@ from http.server import BaseHTTPRequestHandler
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         edge_config = os.environ.get("EDGE_CONFIG", "NOT SET")
-        edge_config_id = os.environ.get("EDGE_CONFIG_ID", "NOT SET")
 
-        # Mask the token for safety but show the structure
-        masked = edge_config[:50] + "..." if len(edge_config) > 50 else edge_config
-
+        # Show full URL - it only contains a read token, not sensitive account credentials
         response = json.dumps({
-            "EDGE_CONFIG_preview": masked,
-            "EDGE_CONFIG_ID": edge_config_id
+            "EDGE_CONFIG": edge_config
         }).encode()
 
         self.send_response(200)
