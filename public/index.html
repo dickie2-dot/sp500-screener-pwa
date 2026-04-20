@@ -1,1 +1,520 @@
-<!DOCTYPE html><html><body><h1>S&P 500 Signals</h1></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Signal | S&P 500 Radar</title>
+  <meta name="description" content="Daily S&P 500 signal generator" />
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0a;
+      --bg2: #111111;
+      --bg3: #1a1a1a;
+      --border: #222222;
+      --text: #f0f0f0;
+      --muted: #666666;
+      --green: #00ff88;
+      --green-dim: rgba(0,255,136,0.08);
+      --amber: #ffaa00;
+      --amber-dim: rgba(255,170,0,0.08);
+      --red: #ff4466;
+    }
+
+    html, body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* HEADER */
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      background: rgba(10,10,10,0.95);
+      backdrop-filter: blur(12px);
+      z-index: 100;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .logo-text {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .date-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--muted);
+      background: var(--bg3);
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+    }
+
+    .refresh-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      font-size: 14px;
+    }
+
+    .refresh-btn:hover { border-color: var(--green); color: var(--green); }
+    .refresh-btn.spinning { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* MAIN */
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+
+    /* STATS BAR */
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+
+    .stat-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .stat-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    .stat-value.green { color: var(--green); }
+    .stat-value.amber { color: var(--amber); }
+    .stat-value.muted { color: var(--muted); }
+
+    /* RADAR GRID */
+    .radar-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+
+    .radar-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .radar-card.trend { border-top: 2px solid var(--green); }
+    .radar-card.turnaround { border-top: 2px solid var(--amber); }
+
+    .radar-header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .radar-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .radar-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    .trend .radar-icon { background: var(--green-dim); }
+    .turnaround .radar-icon { background: var(--amber-dim); }
+
+    .radar-name {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .radar-subtitle {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .count-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 20px;
+    }
+
+    .trend .count-badge {
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid rgba(0,255,136,0.2);
+    }
+
+    .turnaround .count-badge {
+      background: var(--amber-dim);
+      color: var(--amber);
+      border: 1px solid rgba(255,170,0,0.2);
+    }
+
+    /* TICKER LIST */
+    .ticker-list {
+      padding: 8px 0;
+      min-height: 120px;
+    }
+
+    .ticker-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 24px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+      cursor: default;
+    }
+
+    .ticker-item:last-child { border-bottom: none; }
+    .ticker-item:hover { background: var(--bg3); }
+
+    .ticker-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .ticker-arrow {
+      font-size: 12px;
+      width: 20px;
+      text-align: center;
+    }
+
+    .trend .ticker-arrow { color: var(--green); }
+    .turnaround .ticker-arrow { color: var(--amber); }
+
+    .ticker-symbol {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .ticker-tag {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .trend .ticker-tag {
+      background: var(--green-dim);
+      color: var(--green);
+    }
+
+    .turnaround .ticker-tag {
+      background: var(--amber-dim);
+      color: var(--amber);
+    }
+
+    /* EMPTY STATE */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 24px;
+      color: var(--muted);
+      gap: 8px;
+    }
+
+    .empty-icon { font-size: 28px; opacity: 0.4; }
+    .empty-text { font-size: 13px; }
+
+    /* LOADING */
+    .loading-overlay {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 24px;
+      gap: 12px;
+      color: var(--muted);
+    }
+
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid var(--border);
+      border-top-color: var(--green);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    /* FOOTER */
+    footer {
+      text-align: center;
+      padding: 32px 24px;
+      color: var(--muted);
+      font-size: 11px;
+      border-top: 1px solid var(--border);
+      margin-top: 48px;
+    }
+
+    .footer-row { margin-bottom: 4px; }
+    .last-updated {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--muted);
+    }
+
+    /* MOBILE */
+    @media (max-width: 700px) {
+      .stats-bar { grid-template-columns: repeat(2, 1fr); }
+      .radar-grid { grid-template-columns: 1fr; }
+      header { padding: 16px; }
+      main { padding: 20px 16px; }
+    }
+
+    /* NO SIGNALS BANNER */
+    .no-signals-banner {
+      grid-column: 1 / -1;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 48px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .no-signals-banner .icon { font-size: 40px; margin-bottom: 12px; }
+    .no-signals-banner h3 { font-size: 16px; color: var(--text); margin-bottom: 6px; }
+    .no-signals-banner p { font-size: 13px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    <span class="logo-text">Signal</span>
+  </div>
+  <div class="header-right">
+    <span class="date-badge" id="dateBadge">—</span>
+    <button class="refresh-btn" id="refreshBtn" title="Refresh" onclick="loadData()">↻</button>
+  </div>
+</header>
+
+<main>
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="stat-label">Trend Signals</div>
+      <div class="stat-value green" id="trendCount">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Turnaround Signals</div>
+      <div class="stat-value amber" id="turnaroundCount">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Universe</div>
+      <div class="stat-value muted">500</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Last Run</div>
+      <div class="stat-value muted" id="lastRun" style="font-size:13px;padding-top:5px;">—</div>
+    </div>
+  </div>
+
+  <div class="radar-grid" id="radarGrid">
+    <div class="loading-overlay" style="grid-column:1/-1">
+      <div class="spinner"></div>
+      <span style="font-size:13px">Loading signals...</span>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-row">S&P 500 Daily Signal Generator</div>
+  <div class="footer-row last-updated" id="lastUpdated">—</div>
+  <div class="footer-row" style="margin-top:8px;font-size:10px">
+    Not financial advice. For informational purposes only.
+  </div>
+</footer>
+
+<script>
+  const API = 'https://sp500-screener-pwa.vercel.app/api/signals';
+
+  function formatTime(d) {
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function formatDate(str) {
+    if (!str) return '—';
+    const d = new Date(str);
+    return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function renderTickers(list, type) {
+    if (!list || list.length === 0) {
+      return `<div class="empty-state">
+        <div class="empty-icon">${type === 'trend' ? '📡' : '🔍'}</div>
+        <div class="empty-text">No signals today</div>
+      </div>`;
+    }
+    return list.map(t => `
+      <div class="ticker-item">
+        <div class="ticker-left">
+          <span class="ticker-arrow">${type === 'trend' ? '▲' : '◆'}</span>
+          <span class="ticker-symbol">${t}</span>
+        </div>
+        <span class="ticker-tag">${type === 'trend' ? 'Bounce' : 'Recovery'}</span>
+      </div>
+    `).join('');
+  }
+
+  function renderRadar(data) {
+    const grid = document.getElementById('radarGrid');
+    const hasSignals = data.trend_count > 0 || data.turnaround_count > 0;
+
+    if (!hasSignals) {
+      grid.innerHTML = `
+        <div class="no-signals-banner">
+          <div class="icon">📊</div>
+          <h3>No signals today</h3>
+          <p>Markets may be closed or no setups met the criteria today.</p>
+        </div>`;
+      return;
+    }
+
+    grid.innerHTML = `
+      <div class="radar-card trend">
+        <div class="radar-header">
+          <div class="radar-title">
+            <div class="radar-icon">📈</div>
+            <div>
+              <div class="radar-name">Trend Radar</div>
+              <div class="radar-subtitle">Confirmed bounce in uptrend</div>
+            </div>
+          </div>
+          <span class="count-badge">${data.trend_count}</span>
+        </div>
+        <div class="ticker-list">${renderTickers(data.trend, 'trend')}</div>
+      </div>
+
+      <div class="radar-card turnaround">
+        <div class="radar-header">
+          <div class="radar-title">
+            <div class="radar-icon">🔄</div>
+            <div>
+              <div class="radar-name">Turnaround Radar</div>
+              <div class="radar-subtitle">Early structural recovery</div>
+            </div>
+          </div>
+          <span class="count-badge">${data.turnaround_count}</span>
+        </div>
+        <div class="ticker-list">${renderTickers(data.turnaround, 'turnaround')}</div>
+      </div>`;
+  }
+
+  async function loadData() {
+    const btn = document.getElementById('refreshBtn');
+    btn.classList.add('spinning');
+
+    try {
+      const res = await fetch(API + '?t=' + Date.now());
+      const data = await res.json();
+
+      document.getElementById('trendCount').textContent = data.trend_count ?? '—';
+      document.getElementById('turnaroundCount').textContent = data.turnaround_count ?? '—';
+      document.getElementById('dateBadge').textContent = data.date ?? '—';
+      document.getElementById('lastRun').textContent = formatDate(data.date);
+      document.getElementById('lastUpdated').textContent = 'Updated ' + formatTime(new Date());
+
+      renderRadar(data);
+    } catch (e) {
+      document.getElementById('radarGrid').innerHTML = `
+        <div class="no-signals-banner" style="grid-column:1/-1">
+          <div class="icon">⚠️</div>
+          <h3>Unable to load signals</h3>
+          <p>Check your connection and try again.</p>
+        </div>`;
+    } finally {
+      btn.classList.remove('spinning');
+    }
+  }
+
+  // Load on start
+  loadData();
+
+  // Auto refresh every 60 seconds
+  setInterval(loadData, 60000);
+</script>
+
+</body>
+</html>
