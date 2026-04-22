@@ -218,13 +218,17 @@ def screen_ticker(ticker, frames):
             return ("trend", ticker)
 
         # ── LIST 2 — QUALITY FALLEN ANGELS ──
+        # Tightened 2026-04-23 based on backtest: old 25-75% + RSI 30-55 net
+        # underperformed SPY across 1786 picks. Backtest showed only the
+        # narrow 'peak' setups (RSI ~40, 25-35% off high) earn alpha, so we
+        # narrow the filter to roughly that region.
         pct_off_high  = (week52_high - price_today) / week52_high
         below_wma200  = price_today < wma200_today
         deep_enough   = pct_off_high >= 0.25
-        not_destroyed = pct_off_high <= 0.75
+        not_destroyed = pct_off_high <= 0.45
         macd_cross    = macd_crossed_up_recently(close, lookback=20)
         vol_div       = volume_divergence_bullish(close, volume, lookback=5)
-        rsi_recovery  = 30 <= rsi_today <= 55
+        rsi_recovery  = 35 <= rsi_today <= 45
         low_20d       = float(close.iloc[-21:-1].min())
         bouncing      = price_today > low_20d * 1.05
 

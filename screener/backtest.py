@@ -131,13 +131,13 @@ def screen_at(df, i):
         score = int(max(0, min(100, round(rsi_score + vol_score))))
         return ("trend", score)
 
-    # ── FALLEN ANGEL ──
+    # ── FALLEN ANGEL ── (tightened 2026-04-23; keep in sync with run.py)
     pct_off_high = (week52_high - price) / week52_high
-    if not (0.25 <= pct_off_high <= 0.75):
+    if not (0.25 <= pct_off_high <= 0.45):
         return None
     if price >= wma200:
         return None
-    if not (30 <= rsi <= 55):
+    if not (35 <= rsi <= 45):
         return None
     low_20d = df["Close"].iloc[i - 20:i].min()
     if price <= low_20d * 1.05:
@@ -171,7 +171,11 @@ def screen_at(df, i):
 # ─────────────────────────────────────────────────────────────
 def run_backtest(years=2):
     tickers = get_sp500_tickers()
-    frames = download_all(tickers, yrange="5y")
+    # 10y of history so BACKTEST_YEARS up to ~9 has indicator-warmup headroom.
+    # (Yahoo caps bars at ~2500 for 10y; more than enough for 260d warmup +
+    # iteration window + 60d forward buffer.)
+    frames = download_all(tickers, yrange="10y")
+    spy_yrange = "10y"
 
     print("Precomputing indicators...")
     for t in list(frames.keys()):
@@ -182,7 +186,7 @@ def run_backtest(years=2):
     print(f"{len(frames)} tickers usable.")
 
     # SPY for baseline — fetch separately (not an S&P component)
-    spy_ticker, spy_df = _fetch_one("SPY", "5y")
+    spy_ticker, spy_df = _fetch_one("SPY", spy_yrange)
     if spy_df is not None:
         print(f"SPY baseline: {len(spy_df)} bars.")
 
