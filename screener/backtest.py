@@ -194,8 +194,9 @@ def run_backtest(years=2):
     ref_ticker = max(frames, key=lambda t: len(frames[t]))
     all_dates = frames[ref_ticker].index
 
-    # Iteration range: leave 60 bars at the end for forward-return buffer
-    horizons = [5, 20, 60]
+    # Holding horizons (trading days). Long tails added to test the mean-
+    # reversion thesis, which plays out over 6-18 months, not weeks.
+    horizons = [5, 20, 60, 120, 180, 250]
     end_i   = len(all_dates) - max(horizons)
     start_i = max(260, end_i - years * 252)
     print(f"Backtesting {all_dates[start_i].date()} → {all_dates[end_i - 1].date()} "
@@ -300,27 +301,48 @@ def report(picks_log, horizons):
     stats(df[df["type"] == "turnaround"], "FALLEN ANGELS")
     stats(df[df["type"] == "trend"],      "TREND RADAR")
 
-    print("\n── BY SCORE BUCKET ──")
-    print(f"  {'Bucket':<10} {'n':>6} " + " ".join(f"{f'r{h}':>8}" for h in horizons) +
-          " " + " ".join(f"{f'win{h}':>7}" for h in horizons))
+    # Score buckets — split into avg-return and win-rate tables for readability
+    buckets = []
     for lo in range(40, 101, 10):
         hi = lo + 10
         sub = df[(df["score"] >= lo) & (df["score"] < hi)]
-        if sub.empty:
-            continue
-        line = f"  {lo}-{hi-1:<5} {len(sub):>6} "
-        for h in horizons:
-            ser = sub[f"r{h}"].dropna()
-            line += f"{ser.mean():>7.2f}% " if not ser.empty else f"{'n/a':>8}"
-        for h in horizons:
-            ser = sub[f"r{h}"].dropna()
-            wr = (ser > 0).mean() * 100 if not ser.empty else float("nan")
-            line += f"{wr:>6.1f}% " if not pd.isna(wr) else f"{'n/a':>7}"
-        print(line)
+        if not sub.empty:
+            buckets.append((f"{lo}-{hi-1}", sub))
+
+    if buckets:
+        print("\n── BY SCORE BUCKET — AVG RETURN (strategy minus SPY in parens) ──")
+        header = f"  {'Bucket':<8} {'n':>5} " + " ".join(f"{f'{h}d':>14}" for h in horizons)
+        print(header)
+        for label, sub in buckets:
+            line = f"  {label:<8} {len(sub):>5} "
+            for h in horizons:
+                ser = sub[f"r{h}"].dropna()
+                spy = sub[f"spy_r{h}"].dropna()
+                if ser.empty:
+                    line += f"{'n/a':>15}"
+                else:
+                    avg = ser.mean()
+                    excess = avg - spy.mean() if not spy.empty else float("nan")
+                    cell = f"{avg:>6.2f}% ({excess:+.2f})"
+                    line += f"{cell:>15}"
+            print(line)
+
+        print("\n── BY SCORE BUCKET — WIN RATE ──")
+        print(f"  {'Bucket':<8} {'n':>5} " + " ".join(f"{f'{h}d':>8}" for h in horizons))
+        for label, sub in buckets:
+            line = f"  {label:<8} {len(sub):>5} "
+            for h in horizons:
+                ser = sub[f"r{h}"].dropna()
+                wr = (ser > 0).mean() * 100 if not ser.empty else float("nan")
+                line += f"{wr:>7.1f}% " if not pd.isna(wr) else f"{'n/a':>8}"
+            print(line)
 
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "picks_log.csv")
     df.to_csv(out, index=False)
     print(f"\nWrote {out}")
+    print("\nNote: for the mean-reversion thesis (quality fallen angels),")
+    print("the 120d / 180d / 250d columns are the ones to focus on —")
+    print("short horizons are dominated by noise / momentum effects.")
 
 
 if __name__ == "__main__":
