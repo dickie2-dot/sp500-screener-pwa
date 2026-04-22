@@ -1,43 +1,65 @@
 import re
-import time
 import json
 import os
 import requests
 import pandas as pd
 import warnings
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from http.server import BaseHTTPRequestHandler
+
 warnings.filterwarnings("ignore")
 
 
+# ─────────────────────────────────────────────────────────────
+# Tickers
+# ─────────────────────────────────────────────────────────────
 def get_sp500_tickers():
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-    tickers = re.findall(r'href="https://(?:www\.nyse\.com/quote|www\.nasdaq\.com/market-activity/stocks)/[^"]+">([A-Z\-]{1,5})</a>', r.text)
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+    tickers = re.findall(
+        r'href="https://(?:www\.nyse\.com/quote|www\.nasdaq\.com/market-activity/stocks)/[^"]+">([A-Z\-]{1,5})</a>',
+        r.text,
+    )
     return tickers
 
 
-def download_data(tickers):
+# ─────────────────────────────────────────────────────────────
+# Data download (parallel; Yahoo) — stays within serverless timeout
+# ─────────────────────────────────────────────────────────────
+def _fetch_one(ticker):
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1y"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+        data = r.json()
+        result = data["chart"]["result"][0]
+        timestamps = result["timestamp"]
+        closes = result["indicators"]["quote"][0]["close"]
+        volumes = result["indicators"]["quote"][0]["volume"]
+        dates = pd.to_datetime(timestamps, unit="s", utc=True).tz_convert("America/New_York").normalize()
+        df = pd.DataFrame({"Close": closes, "Volume": volumes}, index=dates).dropna()
+        return ticker, (df if not df.empty else None)
+    except Exception:
+        return ticker, None
+
+
+def download_data(tickers, max_workers=30):
     frames = {}
-    headers = {"User-Agent": "Mozilla/5.0"}
-    for i, ticker in enumerate(tickers):
-        try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1y"
-            r = requests.get(url, headers=headers, timeout=10)
-            data = r.json()
-            result = data["chart"]["result"][0]
-            timestamps = result["timestamp"]
-            closes = result["indicators"]["quote"][0]["close"]
-            volumes = result["indicators"]["quote"][0]["volume"]
-            dates = pd.to_datetime(timestamps, unit="s", utc=True).tz_convert("America/New_York").normalize()
-            df = pd.DataFrame({"Close": closes, "Volume": volumes}, index=dates)
-            df = df.dropna()
-            if not df.empty:
-                frames[ticker] = df
-        except Exception:
-            pass
-        if i % 50 == 0 and i > 0:
-            time.sleep(2)
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(_fetch_one, t) for t in tickers]
+        for fut in as_completed(futures):
+            t, df = fut.result()
+            if df is not None:
+                frames[t] = df
     return frames
+
+
+# ─────────────────────────────────────────────────────────────
+# Indicators — WMA (to match chart.py / frontend expectations)
+# ─────────────────────────────────────────────────────────────
+def compute_wma(series, period):
+    weights = pd.Series(range(1, period + 1))
+    return series.rolling(period).apply(lambda x: (x * weights).sum() / weights.sum(), raw=True)
 
 
 def compute_rsi(series, period=14):
@@ -50,19 +72,21 @@ def compute_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 
-def detect_swing_low(close, deviation_pct=0.05, lookback=20):
-    if len(close) < lookback + 1:
-        return False
-    recent = close.iloc[-(lookback + 1):]
-    local_min_val = recent.min()
-    local_min_idx = recent.idxmin()
-    prior = close.loc[:local_min_idx].iloc[:-1]
-    if prior.empty:
-        return False
-    local_peak = prior.max()
-    significant_drop = (local_peak - local_min_val) / local_peak >= deviation_pct
-    price_recovering = close.iloc[-1] > local_min_val
-    return significant_drop and price_recovering
+def compute_macd(series):
+    ema12 = series.ewm(span=12, min_periods=12).mean()
+    ema26 = series.ewm(span=26, min_periods=26).mean()
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, min_periods=9).mean()
+    return macd_line, signal_line
+
+
+def macd_crossed_up_recently(series, lookback=20):
+    macd_line, signal_line = compute_macd(series)
+    for i in range(1, lookback + 1):
+        if (macd_line.iloc[-i] > signal_line.iloc[-i] and
+                macd_line.iloc[-(i + 1)] <= signal_line.iloc[-(i + 1)]):
+            return True
+    return False
 
 
 def volume_divergence_bullish(close, volume, lookback=5):
@@ -72,11 +96,16 @@ def volume_divergence_bullish(close, volume, lookback=5):
     vols = v.iloc[1:]
     up_vol = vols[changes > 0].mean()
     down_vol = vols[changes <= 0].mean()
-    if pd.isna(up_vol) or pd.isna(down_vol) or down_vol == 0:
+    if pd.isna(down_vol):
+        return True
+    if pd.isna(up_vol) or down_vol == 0:
         return False
     return up_vol > down_vol
 
 
+# ─────────────────────────────────────────────────────────────
+# Screener
+# ─────────────────────────────────────────────────────────────
 def screen_ticker(ticker, frames):
     try:
         df = frames.get(ticker)
@@ -86,113 +115,201 @@ def screen_ticker(ticker, frames):
         close = df["Close"].squeeze()
         volume = df["Volume"].squeeze()
 
-        sma20  = close.rolling(20).mean()
-        sma50  = close.rolling(50).mean()
-        sma200 = close.rolling(200).mean()
+        wma20 = compute_wma(close, 20)
+        wma50 = compute_wma(close, 50)
+        wma200 = compute_wma(close, 200)
 
-        price_today  = float(close.iloc[-1])
-        sma20_today  = float(sma20.iloc[-1])
-        sma50_today  = float(sma50.iloc[-1])
-        sma200_today = float(sma200.iloc[-1])
+        price_today = float(close.iloc[-1])
+        wma20_today = float(wma20.iloc[-1])
+        wma50_today = float(wma50.iloc[-1])
+        wma200_today = float(wma200.iloc[-1])
 
-        if any(pd.isna([price_today, sma20_today, sma50_today, sma200_today])):
+        if any(pd.isna([price_today, wma20_today, wma50_today, wma200_today])):
             return None
 
         avg_vol_20 = float(volume.iloc[-21:-1].mean())
         if avg_vol_20 < 500_000:
             return None
 
-        sma200_20d_ago = float(sma200.iloc[-21])
-        sma200_rising = sma200_today > sma200_20d_ago
-
-        week52_high = float(close.rolling(252).max().iloc[-1])
-
+        week52_high = float(close.expanding().max().iloc[-1])
         rsi = compute_rsi(close)
-        rsi_today         = float(rsi.iloc[-1])
-        rsi_last_5        = rsi.iloc[-6:-1]
-        rsi_was_below_30  = bool((rsi_last_5 < 30).any())
-        rsi_crossed_above = rsi_was_below_30 and rsi_today > 30
-
+        rsi_today = float(rsi.iloc[-1])
         vol_today = float(volume.iloc[-1])
+
+        # TREND
+        wma200_20d_ago = float(wma200.iloc[-21])
+        wma200_rising = wma200_today > wma200_20d_ago
+        rsi_last_5 = rsi.iloc[-6:-1]
+        rsi_was_below_30 = bool((rsi_last_5 < 30).any())
+        rsi_crossed_above = rsi_was_below_30 and rsi_today > 30
         vol_surge = vol_today > 1.5 * avg_vol_20
 
-        if (price_today > sma200_today and
-                sma50_today > sma200_today and
-                sma200_rising and
-                price_today > sma50_today and
+        if (price_today > wma200_today and
+                wma50_today > wma200_today and
+                wma200_rising and
+                price_today > wma50_today and
                 rsi_crossed_above and
                 rsi_today < 70 and
                 vol_surge and
                 price_today <= week52_high * 1.05):
             return ("trend", ticker)
 
-        cross_up = (
-            float(sma20.iloc[-1]) > float(sma50.iloc[-1]) and
-            float(sma20.iloc[-6]) <= float(sma50.iloc[-6])
-        )
-        swing_low_found = detect_swing_low(close, deviation_pct=0.05, lookback=20)
-        deep_drawdown   = price_today <= week52_high * 0.80
-        vol_div_bullish = volume_divergence_bullish(close, volume, lookback=5)
+        # FALLEN ANGEL
+        pct_off_high = (week52_high - price_today) / week52_high
+        below_wma200 = price_today < wma200_today
+        deep_enough = pct_off_high >= 0.25
+        not_destroyed = pct_off_high <= 0.75
+        macd_cross = macd_crossed_up_recently(close, lookback=20)
+        vol_div = volume_divergence_bullish(close, volume, lookback=5)
+        rsi_recovery = 30 <= rsi_today <= 55
+        low_20d = float(close.iloc[-21:-1].min())
+        bouncing = price_today > low_20d * 1.05
 
-        if (price_today < sma200_today and
-                sma200_rising and
-                cross_up and
-                swing_low_found and
-                deep_drawdown and
-                vol_div_bullish):
+        if (below_wma200 and deep_enough and not_destroyed and
+                macd_cross and vol_div and rsi_recovery and bouncing):
             return ("turnaround", ticker)
-
     except Exception:
         pass
-
     return None
+
+
+def compute_score(df, hit_type):
+    try:
+        close = df["Close"].squeeze()
+        volume = df["Volume"].squeeze()
+        rsi = compute_rsi(close)
+        rsi_today = float(rsi.iloc[-1])
+        price = float(close.iloc[-1])
+        week52_high = float(close.expanding().max().iloc[-1])
+        pct_off_high = (week52_high - price) / week52_high * 100
+        avg_vol_20 = float(volume.iloc[-21:-1].mean())
+        vol_today = float(volume.iloc[-1])
+        vol_ratio = vol_today / avg_vol_20 if avg_vol_20 else 1
+
+        if hit_type == "turnaround":
+            rsi_score = max(0, 50 - abs(rsi_today - 40) * 2)
+            depth_score = max(0, 50 - max(0, pct_off_high - 35) * 1.5)
+            score = rsi_score + depth_score
+        else:
+            rsi_score = max(0, 50 - abs(rsi_today - 55) * 2)
+            vol_score = min(50, max(0, (vol_ratio - 1.0) * 25))
+            score = rsi_score + vol_score
+        return int(max(0, min(100, round(score))))
+    except Exception:
+        return 0
+
+
+# ─────────────────────────────────────────────────────────────
+# Edge Config I/O
+# ─────────────────────────────────────────────────────────────
+def read_existing():
+    edge_config_id = os.environ.get("EDGE_CONFIG_ID")
+    api_token = os.environ.get("VERCEL_API_TOKEN")
+    if not edge_config_id or not api_token:
+        return {}
+    url = f"https://api.vercel.com/v1/edge-config/{edge_config_id}/item/screener_results"
+    try:
+        r = requests.get(url, headers={"Authorization": f"Bearer {api_token}"}, timeout=6)
+        if r.status_code == 200:
+            val = r.json()
+            return val.get("value", val) if isinstance(val, dict) else {}
+    except Exception:
+        pass
+    return {}
 
 
 def write_to_edge_config(data):
     edge_config_id = os.environ.get("EDGE_CONFIG_ID")
     api_token = os.environ.get("VERCEL_API_TOKEN")
     url = f"https://api.vercel.com/v1/edge-config/{edge_config_id}/items"
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "items": [
-            {
-                "operation": "upsert",
-                "key": "signals",
-                "value": data
-            }
-        ]
-    }
-    r = requests.patch(url, headers=headers, json=payload)
+    headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
+    payload = {"items": [{"operation": "upsert", "key": "screener_results", "value": data}]}
+    r = requests.patch(url, headers=headers, json=payload, timeout=10)
     return r.status_code
 
 
-from http.server import BaseHTTPRequestHandler
-
+# ─────────────────────────────────────────────────────────────
+# Handler
+# ─────────────────────────────────────────────────────────────
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         tickers = get_sp500_tickers()
-        frames  = download_data(tickers)
+        frames = download_data(tickers)
 
-        trend_hits      = []
+        trend_hits = []
         turnaround_hits = []
-
         for ticker in tickers:
             result = screen_ticker(ticker, frames)
             if result:
-                if result[0] == "trend":
-                    trend_hits.append(ticker)
-                else:
-                    turnaround_hits.append(ticker)
+                (trend_hits if result[0] == "trend" else turnaround_hits).append(ticker)
+
+        # Scores + top 5
+        scores = {}
+        all_hits = [(t, "turnaround") for t in turnaround_hits] + [(t, "trend") for t in trend_hits]
+        for ticker, hit_type in all_hits:
+            df = frames.get(ticker)
+            if df is not None:
+                scores[ticker] = compute_score(df, hit_type)
+        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+        top5 = [t for t, _ in ranked[:5]]
+
+        # Breadth + risers/fallers
+        above_200 = 0
+        movers = []
+        for ticker, df in frames.items():
+            try:
+                close = df["Close"].squeeze()
+                if len(close) < 200:
+                    continue
+                w200 = float(compute_wma(close, 200).iloc[-1])
+                price = float(close.iloc[-1])
+                if not pd.isna(w200):
+                    if price > w200:
+                        above_200 += 1
+                    if len(close) >= 2:
+                        prev = float(close.iloc[-2])
+                        if prev > 0:
+                            movers.append(((price - prev) / prev * 100, ticker))
+            except Exception:
+                pass
+
+        total_valid = len(frames) or 1
+        breadth_pct = round(above_200 / total_valid * 100, 1)
+        movers.sort(reverse=True)
+        top_risers = [{"ticker": t, "change": round(c, 2)} for c, t in movers[:5]]
+        top_fallers = [{"ticker": t, "change": round(c, 2)} for c, t in sorted(movers)[:5]]
+
+        # Rolling 7-day top-5 history
+        today_str = datetime.utcnow().strftime("%Y-%m-%d")
+        existing = read_existing()
+        prior_history = existing.get("top5_history", []) if isinstance(existing, dict) else []
+
+        today_picks = []
+        for t in top5:
+            df = frames.get(t)
+            if df is not None:
+                try:
+                    ep = float(df["Close"].squeeze().iloc[-1])
+                    today_picks.append({"ticker": t, "entry_price": round(ep, 2), "score": scores.get(t, 0)})
+                except Exception:
+                    pass
+
+        new_history = [h for h in prior_history if h.get("date") != today_str]
+        new_history.append({"date": today_str, "picks": today_picks})
+        new_history = new_history[-7:]
 
         data = {
-            "date": datetime.utcnow().strftime("%Y-%m-%d"),
+            "date": today_str,
             "trend": sorted(trend_hits),
             "turnaround": sorted(turnaround_hits),
             "trend_count": len(trend_hits),
-            "turnaround_count": len(turnaround_hits)
+            "turnaround_count": len(turnaround_hits),
+            "breadth_pct": breadth_pct,
+            "top_risers": top_risers,
+            "top_fallers": top_fallers,
+            "scores": scores,
+            "top5": top5,
+            "top5_history": new_history,
         }
 
         status = write_to_edge_config(data)
@@ -200,10 +317,12 @@ class handler(BaseHTTPRequestHandler):
         response = json.dumps({
             "success": True,
             "edge_config_write_status": status,
-            "results": data
+            "tickers_processed": len(frames),
+            "results": data,
         }).encode()
 
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(response)

@@ -803,17 +803,27 @@ function renderWatchlist(data) {
   const host = document.getElementById('watchlistContent');
   if (!host) return;
 
-  // Dedupe picks by ticker — keep EARLIEST pick (true watchlist entry price)
+  // Aggregate picks by ticker: count appearances, keep earliest entry (entry_price + date),
+  // track most recent date to show staleness.
   const seen = {};
   for (const day of hist) {
     if (!day.picks) continue;
     for (const p of day.picks) {
       if (!seen[p.ticker]) {
-        seen[p.ticker] = { ticker: p.ticker, entry_price: p.entry_price, entry_date: day.date };
+        seen[p.ticker] = {
+          ticker: p.ticker,
+          entry_price: p.entry_price,
+          entry_date: day.date,
+          last_date: day.date,
+          count: 1
+        };
+      } else {
+        seen[p.ticker].count += 1;
+        seen[p.ticker].last_date = day.date; // history is chronological
       }
     }
   }
-  const items = Object.values(seen);
+  const items = Object.values(seen).sort((a, b) => b.count - a.count);
 
   if (!items.length) {
     host.innerHTML = `
@@ -831,23 +841,30 @@ function renderWatchlist(data) {
       <div class="hist-hdr">
         <div>
           <div class="hist-title">7-Day Watchlist</div>
-          <div class="hist-sub">Top 5 daily picks • performance since entry</div>
+          <div class="hist-sub">Unique top-5 picks over last 7 days • repeats counted</div>
         </div>
-        <div class="breadth-tag">${items.length}</div>
+        <div class="breadth-tag">${items.length} UNIQUE</div>
       </div>
       <div id="watchlist-rows">
-        ${items.map(it => `
+        ${items.map(it => {
+          const streak = it.count > 1
+            ? `<span class="chip chip-sage" style="margin-left:6px;padding:1px 6px;font-size:8px">${it.count}× PICKS</span>`
+            : '';
+          const dateLine = it.count > 1
+            ? `${getName(it.ticker)} • entry ${it.entry_date} @ $${it.entry_price.toFixed(2)} • last ${it.last_date}`
+            : `${getName(it.ticker)} • entry ${it.entry_date} @ $${it.entry_price.toFixed(2)}`;
+          return `
           <div class="rf-row" id="wl-row-${it.ticker}">
-            <div>
-              <div class="rf-ticker">${it.ticker}</div>
-              <div class="rf-name">${getName(it.ticker)} • entry ${it.entry_date} @ $${it.entry_price.toFixed(2)}</div>
+            <div style="min-width:0;flex:1">
+              <div class="rf-ticker">${it.ticker}${streak}</div>
+              <div class="rf-name">${dateLine}</div>
             </div>
             <div class="rf-right">
               <div class="rf-change" id="wl-chg-${it.ticker}" style="color:#bbb">—</div>
               <div class="rf-name" id="wl-cur-${it.ticker}">…</div>
             </div>
-          </div>
-        `).join('')}
+          </div>`;
+        }).join('')}
       </div>
     </div>`;
 
