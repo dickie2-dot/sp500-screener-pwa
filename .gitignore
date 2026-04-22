@@ -3,8 +3,9 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Backtest output (regenerated locally)
+# Backtest output + download cache (regenerated locally)
 screener/picks_log.csv
+screener/.backtest_cache.pkl
 
 # Env
 .env

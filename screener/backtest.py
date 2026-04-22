@@ -19,7 +19,8 @@ No Edge Config writes — purely local analysis.
 import os
 import sys
 import csv
-from datetime import datetime
+import pickle
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
@@ -169,13 +170,50 @@ def screen_at(df, i):
 # ─────────────────────────────────────────────────────────────
 # Backtest loop
 # ─────────────────────────────────────────────────────────────
+CACHE_PATH = os.path.join(_here, ".backtest_cache.pkl")
+CACHE_TTL_HOURS = 24
+
+
+def _load_cache():
+    if not os.path.exists(CACHE_PATH):
+        return None
+    try:
+        with open(CACHE_PATH, "rb") as f:
+            cache = pickle.load(f)
+        age = datetime.now() - cache["ts"]
+        if age > timedelta(hours=CACHE_TTL_HOURS):
+            print(f"[cache] stale ({age}) — refetching")
+            return None
+        print(f"[cache] reusing download from {cache['ts']} "
+              f"({len(cache['frames'])} tickers, {len(cache['spy'])} SPY bars)")
+        return cache
+    except Exception as e:
+        print(f"[cache] read failed: {e}")
+        return None
+
+
+def _save_cache(frames, spy_df):
+    try:
+        with open(CACHE_PATH, "wb") as f:
+            pickle.dump({"frames": frames, "spy": spy_df, "ts": datetime.now()}, f)
+        print(f"[cache] saved to {CACHE_PATH}")
+    except Exception as e:
+        print(f"[cache] save failed: {e}")
+
+
 def run_backtest(years=2):
-    tickers = get_sp500_tickers()
-    # 10y of history so BACKTEST_YEARS up to ~9 has indicator-warmup headroom.
-    # (Yahoo caps bars at ~2500 for 10y; more than enough for 260d warmup +
-    # iteration window + 60d forward buffer.)
-    frames = download_all(tickers, yrange="10y")
-    spy_yrange = "10y"
+    # Cache short-circuit: set FRESH_DOWNLOAD=1 to force a refetch.
+    fresh = os.environ.get("FRESH_DOWNLOAD") == "1"
+    cache = None if fresh else _load_cache()
+    if cache:
+        frames = cache["frames"]
+        spy_df = cache["spy"]
+    else:
+        tickers = get_sp500_tickers()
+        # 10y of history so BACKTEST_YEARS up to ~9 has indicator-warmup headroom.
+        frames = download_all(tickers, yrange="10y")
+        _, spy_df = _fetch_one("SPY", "10y")
+        _save_cache(frames, spy_df)
 
     print("Precomputing indicators...")
     for t in list(frames.keys()):
@@ -185,8 +223,6 @@ def run_backtest(years=2):
         precompute(frames[t])
     print(f"{len(frames)} tickers usable.")
 
-    # SPY for baseline — fetch separately (not an S&P component)
-    spy_ticker, spy_df = _fetch_one("SPY", spy_yrange)
     if spy_df is not None:
         print(f"SPY baseline: {len(spy_df)} bars.")
 
