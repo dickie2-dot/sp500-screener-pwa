@@ -487,7 +487,6 @@ function updateTime() {
     String(now.getMinutes()).padStart(2,'0') + ' EST';
 }
 updateTime();
-setInterval(updateTime, 30000);
 
 // ── TABS ──
 function switchTab(tab) {
@@ -882,7 +881,7 @@ function renderHistory(data, mode) {
 // ── LOAD DATA ──
 async function loadData() {
   try {
-    const res = await fetch(API + '?t=' + Date.now());
+    const res = await fetch(API);
     appData = await res.json();
     renderSignals(appData);
     const tab = document.querySelector('.tab-btn.active').id.replace('tab-btn-','');
@@ -911,7 +910,6 @@ async function loadData() {
 })();
 
 loadData();
-setInterval(loadData, 60000);
 </script>
 </body>
 </html>
