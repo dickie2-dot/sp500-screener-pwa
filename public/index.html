@@ -480,14 +480,19 @@ const COMPANY_NAMES = {
 
 function getName(t) { return COMPANY_NAMES[t] || t; }
 
-// ── TIME ──
-function updateTime() {
-  const now = new Date();
-  document.getElementById('headerTime').textContent =
-    String(now.getHours()).padStart(2,'0') + ':' +
-    String(now.getMinutes()).padStart(2,'0') + ' EST';
+// ── HEADER TIMESTAMP ──
+// Shows when the data was last scraped — proves automation is alive.
+function updateScrapeTime(data) {
+  const el = document.getElementById('headerTime');
+  if (!el) return;
+  if (data && data.last_scraped) {
+    el.textContent = 'Scraped ' + data.last_scraped;
+  } else if (data && data.date) {
+    el.textContent = 'Data ' + data.date;
+  } else {
+    el.textContent = '—';
+  }
 }
-updateTime();
 
 // ── TABS ──
 function switchTab(tab) {
@@ -684,6 +689,7 @@ function renderSignals(data) {
   const turnaround = data.turnaround || [];
   const trend      = data.trend      || [];
   const total      = turnaround.length + trend.length;
+  const top5Set    = new Set(top5list);
 
   if (total === 0) {
     document.getElementById('signalsContent').innerHTML =
@@ -691,29 +697,43 @@ function renderSignals(data) {
     return;
   }
 
+  // Helper: which category does this ticker belong to?
+  const categoryOf = (t) => turnaround.includes(t) ? 'turnaround' : 'trend';
+
   let html = `
     <div class="section-row">
       <div class="section-heading">Today's Signals</div>
       <div class="section-meta">By Score &nbsp;·&nbsp; ${total}</div>
     </div>`;
 
-  if (turnaround.length > 0) {
-    html += `<div class="sub-label">Fallen Angels</div>`;
-    turnaround.forEach((t, i) => { html += renderTickerCard(t, i, top5list.includes(t), 'turnaround', scores); });
+  // ── TOP PICKS (rank-ordered) — always first, pulled from both categories ──
+  if (top5list.length > 0) {
+    html += `<div class="sub-label" style="color:var(--sage)">✦ Top Picks</div>`;
+    top5list.forEach((t) => {
+      html += renderTickerCard(t, 0, true, categoryOf(t), scores);
+    });
   }
 
-  if (trend.length > 0) {
+  // Remaining hits, split by category, top5 excluded
+  const remainingTurn  = turnaround.filter(t => !top5Set.has(t));
+  const remainingTrend = trend.filter(t => !top5Set.has(t));
+
+  if (remainingTurn.length > 0) {
+    html += `<div class="sub-label" style="margin-top:18px">Fallen Angels</div>`;
+    remainingTurn.forEach((t, i) => { html += renderTickerCard(t, i, false, 'turnaround', scores); });
+  }
+
+  if (remainingTrend.length > 0) {
     html += `<div class="sub-label" style="margin-top:18px">Trend Radar</div>`;
-    trend.forEach((t, i) => { html += renderTickerCard(t, i, false, 'trend', scores); });
+    remainingTrend.forEach((t, i) => { html += renderTickerCard(t, i, false, 'trend', scores); });
   }
 
   document.getElementById('signalsContent').innerHTML = html;
 
   setTimeout(() => {
-    const all = [...turnaround, ...trend];
+    const all = [...top5list, ...remainingTurn, ...remainingTrend];
     all.forEach((ticker, i) => {
-      const type = turnaround.includes(ticker) ? 'turnaround' : 'trend';
-      const id   = `card-${type}-${ticker}`;
+      const id = `card-${categoryOf(ticker)}-${ticker}`;
       setTimeout(() => loadCardData(id, ticker), i * 100);
     });
   }, 200);
@@ -987,6 +1007,7 @@ async function loadData() {
   try {
     const res = await fetch(API);
     appData = await res.json();
+    updateScrapeTime(appData);
     renderSignals(appData);
     const tab = document.querySelector('.tab-btn.active').id.replace('tab-btn-','');
     if (tab === 'market')  renderMarket(appData);

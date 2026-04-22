@@ -300,6 +300,7 @@ class handler(BaseHTTPRequestHandler):
 
         data = {
             "date": today_str,
+            "last_scraped": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
             "trend": sorted(trend_hits),
             "turnaround": sorted(turnaround_hits),
             "trend_count": len(trend_hits),
