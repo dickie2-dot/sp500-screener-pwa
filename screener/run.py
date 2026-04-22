@@ -169,6 +169,55 @@ def screen_ticker(ticker, frames):
     return None
 
 
+def read_existing_from_edge_config():
+    """Read current screener_results from Edge Config — returns dict or {} on failure."""
+    edge_config_id = os.environ.get("EDGE_CONFIG_ID")
+    api_token = os.environ.get("VERCEL_API_TOKEN")
+    if not edge_config_id or not api_token:
+        return {}
+    url = f"https://api.vercel.com/v1/edge-config/{edge_config_id}/item/screener_results"
+    try:
+        r = requests.get(url, headers={"Authorization": f"Bearer {api_token}"}, timeout=10)
+        if r.status_code == 200:
+            payload = r.json()
+            # Vercel returns {"value": <actual-value>} for the /item endpoint
+            val = payload.get("value", payload)
+            return val if isinstance(val, dict) else {}
+    except Exception as e:
+        print(f"[WARN] read existing failed: {e}")
+    return {}
+
+
+def compute_score(ticker, df, hit_type):
+    """Simple 0-100 score. Turnaround: reward RSI sweet-spot + proximity to high.
+       Trend: reward RSI health + volume surge magnitude."""
+    try:
+        close = df["Close"].squeeze()
+        volume = df["Volume"].squeeze()
+        rsi = compute_rsi(close)
+        rsi_today = float(rsi.iloc[-1])
+        price = float(close.iloc[-1])
+        week52_high = float(close.expanding().max().iloc[-1])
+        pct_off_high = (week52_high - price) / week52_high * 100
+        avg_vol_20 = float(volume.iloc[-21:-1].mean())
+        vol_today = float(volume.iloc[-1])
+        vol_ratio = vol_today / avg_vol_20 if avg_vol_20 else 1
+
+        if hit_type == "turnaround":
+            # Peak at RSI ~40, sweet spot pct_off_high ~25-40
+            rsi_score = max(0, 50 - abs(rsi_today - 40) * 2)
+            depth_score = max(0, 50 - max(0, pct_off_high - 35) * 1.5)
+            score = rsi_score + depth_score
+        else:  # trend
+            rsi_score = max(0, 50 - abs(rsi_today - 55) * 2)
+            vol_score = min(50, max(0, (vol_ratio - 1.0) * 25))
+            score = rsi_score + vol_score
+
+        return int(max(0, min(100, round(score))))
+    except Exception:
+        return 0
+
+
 def push_to_edge_config(data):
     edge_config_id = os.environ.get("EDGE_CONFIG_ID")
     api_token = os.environ.get("VERCEL_API_TOKEN")
@@ -250,15 +299,53 @@ def main():
 
     print(f"Breadth: {breadth_pct}% above WMA200")
 
+    # ── Score every hit and pick top 5 overall ──
+    scores = {}
+    all_hits = [(t, "turnaround") for t in turnaround_hits] + [(t, "trend") for t in trend_hits]
+    for ticker, hit_type in all_hits:
+        df = frames.get(ticker)
+        if df is not None:
+            scores[ticker] = compute_score(ticker, df, hit_type)
+
+    ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+    top5 = [t for t, _ in ranked[:5]]
+
+    # ── Rolling 7-day top-5 history (watchlist) ──
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+    existing = read_existing_from_edge_config()
+    prior_history = existing.get("top5_history", []) if isinstance(existing, dict) else []
+
+    today_picks = []
+    for t in top5:
+        df = frames.get(t)
+        if df is not None:
+            try:
+                entry_price = float(df["Close"].squeeze().iloc[-1])
+                today_picks.append({
+                    "ticker": t,
+                    "entry_price": round(entry_price, 2),
+                    "score": scores.get(t, 0)
+                })
+            except Exception:
+                pass
+
+    # Drop any prior entry for today (rerun-safe), append today, keep last 7
+    new_history = [h for h in prior_history if h.get("date") != today_str]
+    new_history.append({"date": today_str, "picks": today_picks})
+    new_history = new_history[-7:]
+
     data = {
-        "date": datetime.utcnow().strftime("%Y-%m-%d"),
+        "date": today_str,
         "trend": sorted(trend_hits),
         "turnaround": sorted(turnaround_hits),
         "trend_count": len(trend_hits),
         "turnaround_count": len(turnaround_hits),
         "breadth_pct": breadth_pct,
         "top_risers": top_risers,
-        "top_fallers": top_fallers
+        "top_fallers": top_fallers,
+        "scores": scores,
+        "top5": top5,
+        "top5_history": new_history
     }
 
     push_to_edge_config(data)

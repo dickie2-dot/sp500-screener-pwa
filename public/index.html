@@ -419,6 +419,7 @@
 </div>
 
 <div id="tab-history" class="tab-panel">
+  <div id="watchlistContent"></div>
   <div id="historyContent">
     <div class="loading"><div class="spinner"></div>Loading history…</div>
   </div>
@@ -496,7 +497,7 @@ function switchTab(tab) {
     document.getElementById('dot-' + t).classList.toggle('active', t === tab);
   });
   if (tab === 'market'  && appData) renderMarket(appData);
-  if (tab === 'history' && appData) renderHistory(appData, histMode);
+  if (tab === 'history' && appData) { renderWatchlist(appData); renderHistory(appData, histMode); }
 }
 
 // ── CHARTS ──
@@ -580,30 +581,40 @@ async function loadCardData(id, ticker) {
       priceEl.style.color = chg === null ? '#999' : chg >= 0 ? 'var(--sage)' : 'var(--red)';
     }
 
-    // Chips on card face
+    // % gain required for price to reach each WMA (positive = upside target)
+    const gainPct = (val) => (val && price) ? ((val - price) / price * 100) : null;
+    const g50  = gainPct(wma50);
+    const g200 = gainPct(wma200);
+
+    // Chips on card face — show target upside to WMA50 & WMA200
     const faceWmaEl = document.getElementById('face-wma-' + id);
     if (faceWmaEl) {
-      const fmtFace = (label, val) => {
-        if (!val) return '';
-        const up = price > val;
-        return `<span class="chip ${up ? 'chip-sage' : ''}">${label} $${val.toFixed(0)} ${up ? '▲' : '▼'}</span>`;
+      const fmtGain = (label, g) => {
+        if (g === null) return '';
+        const up = g > 0;  // price below WMA => positive gain to reach it
+        const sign = g >= 0 ? '+' : '';
+        const cls  = up ? 'chip chip-sage' : 'chip';
+        return `<span class="${cls}">${label} ${sign}${g.toFixed(1)}%</span>`;
       };
-      faceWmaEl.innerHTML = fmtFace('WMA200', wma200);
+      faceWmaEl.innerHTML = fmtGain('→ WMA50', g50) + fmtGain('→ WMA200', g200);
     }
 
-    // WMA blocks inside expanded panel
-    const setBlock = (suffix, val) => {
+    // WMA blocks inside expanded panel — show value + % gain to reach it
+    const setBlock = (suffix, val, gain) => {
       const el = document.getElementById(suffix + '-' + id);
       if (!el || !val) return;
       const up = price > val;
+      const gainStr = gain !== null && gain !== undefined
+        ? `<span class="wma-block-arrow" style="color:${gain>0?'var(--sage)':'var(--red)'}">${gain>=0?'+':''}${gain.toFixed(1)}%</span>`
+        : `<span class="wma-block-arrow ${up?'arrow-up':'arrow-down'}">${up?'▲':'▼'}</span>`;
       el.innerHTML = `<div class="wma-block-label">${suffix.toUpperCase()}</div>
         <div class="wma-block-val" style="color:var(--text)">
-          $${val.toFixed(0)}<span class="wma-block-arrow ${up?'arrow-up':'arrow-down'}">${up?'▲':'▼'}</span>
+          $${val.toFixed(0)} ${gainStr}
         </div>`;
     };
-    setBlock('wma20',  wma20);
-    setBlock('wma50',  wma50);
-    setBlock('wma200', wma200);
+    setBlock('wma20',  wma20,  gainPct(wma20));
+    setBlock('wma50',  wma50,  g50);
+    setBlock('wma200', wma200, g200);
 
     const lastPriceEl = document.getElementById('lastprice-' + id);
     if (lastPriceEl) {
@@ -786,6 +797,82 @@ function renderMarket(data) {
   }
 }
 
+// ── 7-DAY TOP PICKS WATCHLIST ──
+function renderWatchlist(data) {
+  const hist = data.top5_history || [];
+  const host = document.getElementById('watchlistContent');
+  if (!host) return;
+
+  // Dedupe picks by ticker — keep EARLIEST pick (true watchlist entry price)
+  const seen = {};
+  for (const day of hist) {
+    if (!day.picks) continue;
+    for (const p of day.picks) {
+      if (!seen[p.ticker]) {
+        seen[p.ticker] = { ticker: p.ticker, entry_price: p.entry_price, entry_date: day.date };
+      }
+    }
+  }
+  const items = Object.values(seen);
+
+  if (!items.length) {
+    host.innerHTML = `
+      <div class="card card-pad" style="margin-top:16px">
+        <div class="hist-hdr"><div class="hist-title">7-Day Watchlist</div></div>
+        <div class="hist-sub">Top 5 daily picks — tracked even after they drop off</div>
+        <div class="empty-state">🔭 Watchlist builds as daily runs complete.<br>Check back tomorrow.</div>
+      </div>`;
+    return;
+  }
+
+  // Render skeleton rows immediately; hydrate current prices async
+  host.innerHTML = `
+    <div class="card card-pad" style="margin-top:16px">
+      <div class="hist-hdr">
+        <div>
+          <div class="hist-title">7-Day Watchlist</div>
+          <div class="hist-sub">Top 5 daily picks • performance since entry</div>
+        </div>
+        <div class="breadth-tag">${items.length}</div>
+      </div>
+      <div id="watchlist-rows">
+        ${items.map(it => `
+          <div class="rf-row" id="wl-row-${it.ticker}">
+            <div>
+              <div class="rf-ticker">${it.ticker}</div>
+              <div class="rf-name">${getName(it.ticker)} • entry ${it.entry_date} @ $${it.entry_price.toFixed(2)}</div>
+            </div>
+            <div class="rf-right">
+              <div class="rf-change" id="wl-chg-${it.ticker}" style="color:#bbb">—</div>
+              <div class="rf-name" id="wl-cur-${it.ticker}">…</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+
+  // Hydrate current price per ticker (stagger to avoid burst)
+  items.forEach((it, i) => {
+    setTimeout(() => {
+      fetch(`${CHART_API}?ticker=${it.ticker}`)
+        .then(r => r.json())
+        .then(d => {
+          if (!d.last_price) return;
+          const cur = d.last_price;
+          const pct = (cur - it.entry_price) / it.entry_price * 100;
+          const chgEl = document.getElementById(`wl-chg-${it.ticker}`);
+          const curEl = document.getElementById(`wl-cur-${it.ticker}`);
+          if (chgEl) {
+            chgEl.textContent = `${pct>=0?'+':''}${pct.toFixed(2)}%`;
+            chgEl.style.color = pct >= 0 ? 'var(--sage)' : 'var(--red)';
+          }
+          if (curEl) curEl.textContent = `$${cur.toFixed(2)}`;
+        })
+        .catch(() => {});
+    }, i * 120);
+  });
+}
+
 // ── HISTORY ──
 function renderHistory(data, mode) {
   histMode = mode;
@@ -886,7 +973,7 @@ async function loadData() {
     renderSignals(appData);
     const tab = document.querySelector('.tab-btn.active').id.replace('tab-btn-','');
     if (tab === 'market')  renderMarket(appData);
-    if (tab === 'history') renderHistory(appData, histMode);
+    if (tab === 'history') { renderWatchlist(appData); renderHistory(appData, histMode); }
   } catch(e) {
     document.getElementById('signalsContent').innerHTML =
       `<div class="empty-state" style="margin-top:40px">⚠️ Unable to load signals.<br>Check connection.</div>`;
