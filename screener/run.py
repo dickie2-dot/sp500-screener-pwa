@@ -6,7 +6,25 @@ import requests
 import pandas as pd
 import warnings
 from datetime import datetime
+from zoneinfo import ZoneInfo
 warnings.filterwarnings("ignore")
+
+
+def trim_partial_session(close, volume):
+    """If today's bar is mid-session (NY time, pre 16:00), drop it so indicators
+    use only complete daily bars. Makes midday manual runs consistent with
+    overnight runs."""
+    try:
+        ny_now = datetime.now(ZoneInfo("America/New_York"))
+        last_ts = close.index[-1]
+        # Normalize: last_ts may already be midnight-normalized daily date
+        last_date = last_ts.date() if hasattr(last_ts, "date") else last_ts
+        if last_date == ny_now.date() and ny_now.hour < 16:
+            close = close.iloc[:-1]
+            volume = volume.iloc[:-1]
+    except Exception:
+        pass
+    return close, volume
 
 
 def get_sp500_tickers():
@@ -123,11 +141,16 @@ def volume_divergence_bullish(close, volume, lookback=5):
 def screen_ticker(ticker, frames):
     try:
         df = frames.get(ticker)
-        if df is None or len(df) < 210:
+        if df is None or len(df) < 260:   # need ~1y of complete bars for rolling(252)
             return None
 
         close = df["Close"].squeeze()
         volume = df["Volume"].squeeze()
+
+        # Guard: if midday run, drop the partial bar
+        close, volume = trim_partial_session(close, volume)
+        if len(close) < 260:
+            return None
 
         wma20  = compute_wma(close, 20)
         wma50  = compute_wma(close, 50)
@@ -141,34 +164,43 @@ def screen_ticker(ticker, frames):
         if any(pd.isna([price_today, wma20_today, wma50_today, wma200_today])):
             return None
 
+        # Dollar-volume liquidity filter (>= $10M avg daily traded value)
         avg_vol_20 = float(volume.iloc[-21:-1].mean())
-        if avg_vol_20 < 500_000:
+        avg_dollar_vol_20 = float((close * volume).iloc[-21:-1].mean())
+        if avg_dollar_vol_20 < 10_000_000:
             return None
 
-        week52_high = float(close.expanding().max().iloc[-1])
+        # FIX: true 52-week high (rolling 252), not all-time
+        week52_high = float(close.rolling(252).max().iloc[-1])
+        if pd.isna(week52_high) or week52_high <= 0:
+            return None
+
         rsi = compute_rsi(close)
         rsi_today = float(rsi.iloc[-1])
         vol_today = float(volume.iloc[-1])
 
-        # LIST 1 - TREND RADAR
-        wma200_20d_ago    = float(wma200.iloc[-21])
-        wma200_rising     = wma200_today > wma200_20d_ago
-        rsi_last_5        = rsi.iloc[-6:-1]
-        rsi_was_below_30  = bool((rsi_last_5 < 30).any())
-        rsi_crossed_above = rsi_was_below_30 and rsi_today > 30
-        vol_surge         = vol_today > 1.5 * avg_vol_20
+        # ── LIST 1 — TREND RADAR (buy-the-dip in an uptrend) ──
+        wma200_20d_ago = float(wma200.iloc[-21])
+        wma200_rising  = wma200_today > wma200_20d_ago
+
+        # Softer pullback-within-uptrend: RSI touched <40 in last 10 days and
+        # has recovered above 45 today. Replaces the old contradictory <30 rule.
+        rsi_last_10      = rsi.iloc[-11:-1]
+        rsi_pulled_back  = bool((rsi_last_10 < 40).any())
+        rsi_recovered    = rsi_today > 45
+        vol_surge        = vol_today > 1.5 * avg_vol_20
 
         if (price_today > wma200_today and
                 wma50_today > wma200_today and
                 wma200_rising and
                 price_today > wma50_today and
-                rsi_crossed_above and
+                rsi_pulled_back and
+                rsi_recovered and
                 rsi_today < 70 and
-                vol_surge and
-                price_today <= week52_high * 1.05):
+                vol_surge):
             return ("trend", ticker)
 
-        # LIST 2 - QUALITY FALLEN ANGELS
+        # ── LIST 2 — QUALITY FALLEN ANGELS ──
         pct_off_high  = (week52_high - price_today) / week52_high
         below_wma200  = price_today < wma200_today
         deep_enough   = pct_off_high >= 0.25
@@ -219,10 +251,13 @@ def compute_score(ticker, df, hit_type):
     try:
         close = df["Close"].squeeze()
         volume = df["Volume"].squeeze()
+        close, volume = trim_partial_session(close, volume)
         rsi = compute_rsi(close)
         rsi_today = float(rsi.iloc[-1])
         price = float(close.iloc[-1])
-        week52_high = float(close.expanding().max().iloc[-1])
+        week52_high = float(close.rolling(252).max().iloc[-1])
+        if pd.isna(week52_high) or week52_high <= 0:
+            return 0
         pct_off_high = (week52_high - price) / week52_high * 100
         avg_vol_20 = float(volume.iloc[-21:-1].mean())
         vol_today = float(volume.iloc[-1])
@@ -291,13 +326,15 @@ def main():
     print(f"\nTrend hits: {len(trend_hits)}")
     print(f"Fallen Angel hits: {len(turnaround_hits)}")
 
-    # Market breadth - % of stocks above their 200 WMA
+    # Market breadth - % of stocks above their 200 WMA (uses trimmed bars)
     above_200 = 0
     risers = []
     fallers = []
     for ticker, df in frames.items():
         try:
             close = df["Close"].squeeze()
+            volume = df["Volume"].squeeze()
+            close, volume = trim_partial_session(close, volume)
             if len(close) < 200:
                 continue
             wma200 = compute_wma(close, 200)
@@ -324,6 +361,24 @@ def main():
 
     print(f"Breadth: {breadth_pct}% above WMA200")
 
+    # ── Regime gate ──
+    # Trend signals struggle in weak breadth; fallen angels become knife-catching
+    # in a full breadth collapse. Thresholds: trend requires >=45%, fallen
+    # angels require >=30%.
+    gated_trend = []
+    gated_turn  = []
+    if breadth_pct >= 45:
+        gated_trend = trend_hits
+    else:
+        print(f"[regime] Trend signals muted (breadth {breadth_pct}% < 45%)")
+    if breadth_pct >= 30:
+        gated_turn = turnaround_hits
+    else:
+        print(f"[regime] Fallen Angel signals muted (breadth {breadth_pct}% < 30%)")
+    trend_hits = gated_trend
+    turnaround_hits = gated_turn
+    print(f"After regime gate — Trend: {len(trend_hits)}, Fallen Angels: {len(turnaround_hits)}")
+
     # ── Score every hit and pick top 5 overall ──
     scores = {}
     all_hits = [(t, "turnaround") for t in turnaround_hits] + [(t, "trend") for t in trend_hits]
@@ -345,7 +400,8 @@ def main():
         df = frames.get(t)
         if df is not None:
             try:
-                entry_price = float(df["Close"].squeeze().iloc[-1])
+                c, _v = trim_partial_session(df["Close"].squeeze(), df["Volume"].squeeze())
+                entry_price = float(c.iloc[-1])
                 today_picks.append({
                     "ticker": t,
                     "entry_price": round(entry_price, 2),
