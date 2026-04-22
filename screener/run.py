@@ -72,7 +72,7 @@ def get_sp500_tickers():
 def _fetch_one_yahoo(ticker):
     """Fetch a single ticker from Yahoo Finance — 1 year daily bars."""
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1y"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2y"
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         data = r.json()
         result = data["chart"]["result"][0]
