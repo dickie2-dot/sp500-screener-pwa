@@ -422,6 +422,7 @@
 </div>
 
 <div id="tab-history" class="tab-panel">
+  <div id="backtestContent"></div>
   <div id="watchlistContent"></div>
   <div id="historyContent">
     <div class="loading"><div class="spinner"></div>Loading history…</div>
@@ -505,7 +506,7 @@ function switchTab(tab) {
     document.getElementById('dot-' + t).classList.toggle('active', t === tab);
   });
   if (tab === 'market'  && appData) renderMarket(appData);
-  if (tab === 'history' && appData) { renderWatchlist(appData); renderHistory(appData, histMode); }
+  if (tab === 'history' && appData) { renderBacktest(); renderWatchlist(appData); renderHistory(appData, histMode); }
 }
 
 // ── CHARTS ──
@@ -664,7 +665,7 @@ function renderTickerCard(ticker, index, isTop5, type, scores) {
         <div class="ticker-right">
           ${score !== null
             ? `<div class="score-wrap"><span class="score-num">${score}</span><span class="score-den"> /100</span></div>
-               <div class="score-caption">Setup Fit</div>`
+               <div class="score-caption">Setup Fit · 6-12mo</div>`
             : ''}
           <div class="expand-btn">▼</div>
         </div>
@@ -713,7 +714,7 @@ function renderSignals(data) {
   // ── TOP PICKS (rank-ordered) — always first, pulled from both categories ──
   if (top5list.length > 0) {
     html += `<div class="sub-label" style="color:var(--sage)">✦ Top Picks</div>`;
-    html += `<div class="picks-disclaimer">Ranked by <strong>Setup Fit</strong> — how closely each stock matches the screener's ideal pattern. Not a buy recommendation or expected-return forecast. Always do your own research.</div>`;
+    html += `<div class="picks-disclaimer">Ranked by <strong>Setup Fit</strong> — how closely each stock matches the screener's ideal pattern. <strong>Designed for 6-12 month holds, not day-trading.</strong> 4y backtest: +3.9% excess vs SPY @ 180d, 62.7% win rate on fallen angels. Always do your own research.</div>`;
     top5list.forEach((t) => {
       html += renderTickerCard(t, 0, true, categoryOf(t), scores);
     });
@@ -820,6 +821,67 @@ function renderMarket(data) {
       }
     });
   }
+}
+
+// ── BACKTEST PERFORMANCE PANEL ──
+// Stats from the 4y backtest (Apr 2021 – Apr 2025, 2247 picks, incl. 2022 bear market).
+// Update these whenever you rerun screener/backtest.py with a new window.
+const BACKTEST = {
+  window:  "Apr 2021 – Apr 2025",
+  years:   4,
+  picks:   2247,
+  overall_excess_180d: 2.99,   // % above SPY at 180d hold
+  overall_excess_250d: 4.42,
+  categories: [
+    { name: "Fallen Angels", n: 1187, avg180: 12.76, excess180: 3.94, win180: 62.7, excess250: 3.74 },
+    { name: "Trend Radar",   n: 1060, avg180:  8.74, excess180: 1.92, win180: 57.0, excess250: 5.19 },
+  ],
+};
+
+function renderBacktest() {
+  const host = document.getElementById('backtestContent');
+  if (!host) return;
+  const rows = BACKTEST.categories.map(c => `
+    <div class="rf-row">
+      <div style="min-width:0;flex:1">
+        <div class="rf-ticker">${c.name}</div>
+        <div class="rf-name">n=${c.n} · ${c.win180}% win @ 180d</div>
+      </div>
+      <div class="rf-right">
+        <div class="rf-change up">+${c.avg180.toFixed(1)}%</div>
+        <div class="rf-name">+${c.excess180.toFixed(2)}% vs SPY · 180d</div>
+      </div>
+    </div>`).join('');
+
+  host.innerHTML = `
+    <div class="card card-pad" style="margin-top:16px">
+      <div class="hist-hdr">
+        <div>
+          <div class="hist-title">Backtest Performance</div>
+          <div class="hist-sub">${BACKTEST.window} · ${BACKTEST.years}-year window · ${BACKTEST.picks.toLocaleString()} picks</div>
+        </div>
+        <div class="breadth-tag" style="color:var(--sage)">ALPHA</div>
+      </div>
+      <div class="stat-blocks" style="margin-bottom:14px">
+        <div class="stat-block">
+          <div class="sb-label">Excess @ 180d</div>
+          <div class="sb-val" style="color:var(--sage)">+${BACKTEST.overall_excess_180d}%</div>
+        </div>
+        <div class="stat-block">
+          <div class="sb-label">Excess @ 250d</div>
+          <div class="sb-val" style="color:var(--sage)">+${BACKTEST.overall_excess_250d}%</div>
+        </div>
+        <div class="stat-block">
+          <div class="sb-label">Hold window</div>
+          <div class="sb-val" style="font-size:16px">6-12 mo</div>
+        </div>
+      </div>
+      <div class="sub-label" style="margin:8px 0 4px">By Category</div>
+      ${rows}
+      <div class="picks-disclaimer" style="margin-top:10px">
+        Strategy back-tested across a 4-year window that includes the 2022 bear market. Past results are not a guarantee of future returns; this is a historical performance summary of the screener logic, not investment advice.
+      </div>
+    </div>`;
 }
 
 // ── 7-DAY TOP PICKS WATCHLIST ──
@@ -1016,7 +1078,7 @@ async function loadData() {
     renderSignals(appData);
     const tab = document.querySelector('.tab-btn.active').id.replace('tab-btn-','');
     if (tab === 'market')  renderMarket(appData);
-    if (tab === 'history') { renderWatchlist(appData); renderHistory(appData, histMode); }
+    if (tab === 'history') { renderBacktest(); renderWatchlist(appData); renderHistory(appData, histMode); }
   } catch(e) {
     document.getElementById('signalsContent').innerHTML =
       `<div class="empty-state" style="margin-top:40px">⚠️ Unable to load signals.<br>Check connection.</div>`;
