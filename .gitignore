@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Backtest output (regenerated locally)
+screener/picks_log.csv
+
+# Env
+.env
+.env.local
+
+# Editor
+.vscode/
+.idea/
