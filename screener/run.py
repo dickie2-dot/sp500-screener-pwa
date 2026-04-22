@@ -2,12 +2,46 @@ import re
 import time
 import json
 import os
+import sys
 import requests
 import pandas as pd
 import warnings
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from concurrent.futures import ThreadPoolExecutor, as_completed
 warnings.filterwarnings("ignore")
+
+
+def load_env_file(path):
+    """Dependency-free .env loader — sets any KEY=VALUE lines into os.environ
+    (without clobbering already-set values)."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                k, v = k.strip(), v.strip().strip('"').strip("'")
+                if k and k not in os.environ:
+                    os.environ[k] = v
+        return True
+    except FileNotFoundError:
+        return False
+
+
+# Load .env from a few candidate locations so the .bat's CWD doesn't matter
+_here = os.path.dirname(os.path.abspath(__file__))
+for _candidate in [
+    os.environ.get("SP500_ENV_FILE", ""),
+    os.path.join(os.getcwd(), ".env"),
+    os.path.join(_here, ".env"),
+    os.path.join(_here, "..", ".env"),
+    r"C:\Users\owen7\Desktop\sp500-screener\.env",
+]:
+    if _candidate and load_env_file(_candidate):
+        print(f"[env] loaded {_candidate}")
+        break
 
 
 def trim_partial_session(close, volume):
@@ -35,58 +69,41 @@ def get_sp500_tickers():
     return tickers
 
 
-def download_data(tickers):
-    """Polygon.io download with configurable per-call pacing and 429 backoff.
+def _fetch_one_yahoo(ticker):
+    """Fetch a single ticker from Yahoo Finance — 1 year daily bars."""
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1y"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        data = r.json()
+        result = data["chart"]["result"][0]
+        timestamps = result["timestamp"]
+        closes = result["indicators"]["quote"][0]["close"]
+        volumes = result["indicators"]["quote"][0]["volume"]
+        dates = pd.to_datetime(timestamps, unit="s", utc=True).tz_convert("America/New_York").normalize()
+        df = pd.DataFrame({"Close": closes, "Volume": volumes}, index=dates).dropna()
+        return ticker, (df if not df.empty else None)
+    except Exception:
+        return ticker, None
 
-    Env vars:
-      POLYGON_API_KEY          required
-      POLYGON_RATE_DELAY       seconds between calls (default 13 = safe for free tier 5/min)
-      POLYGON_MAX_RETRIES      retries per 429 (default 5)
+
+def download_data(tickers):
+    """Parallel Yahoo Finance download. Env:
+         YAHOO_WORKERS  number of concurrent requests (default 20)
     """
-    print("Downloading data via Polygon.io (rate-limit friendly)...")
-    api_key = os.environ.get("POLYGON_API_KEY")
-    delay = float(os.environ.get("POLYGON_RATE_DELAY", "13"))
-    max_retries = int(os.environ.get("POLYGON_MAX_RETRIES", "5"))
+    workers = int(os.environ.get("YAHOO_WORKERS", "20"))
+    print(f"Downloading {len(tickers)} tickers via Yahoo Finance ({workers} workers)...")
 
     frames = {}
-    end = datetime.utcnow().strftime("%Y-%m-%d")
-    start = (datetime.utcnow() - pd.Timedelta(days=400)).strftime("%Y-%m-%d")
-
-    for idx, ticker in enumerate(tickers, 1):
-        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}"
-        params = {"adjusted": "true", "sort": "asc", "limit": 500, "apiKey": api_key}
-
-        # Retry loop with exponential backoff on 429
-        backoff = delay
-        for attempt in range(max_retries + 1):
-            try:
-                r = requests.get(url, params=params, timeout=20)
-                if r.status_code == 429:
-                    wait = backoff * (2 ** attempt)
-                    print(f"  [429] {ticker} — backing off {wait:.0f}s (attempt {attempt+1}/{max_retries})")
-                    time.sleep(wait)
-                    continue
-                data = r.json()
-                if data.get("status") not in ("OK", "DELAYED") or not data.get("results"):
-                    break
-                results = data["results"]
-                dates = pd.to_datetime([x["t"] for x in results], unit="ms", utc=True).tz_convert("America/New_York").normalize()
-                closes = [x["c"] for x in results]
-                volumes = [x["v"] for x in results]
-                df = pd.DataFrame({"Close": closes, "Volume": volumes}, index=dates).dropna()
-                if not df.empty:
-                    frames[ticker] = df
-                break
-            except Exception as e:
-                print(f"  [WARN] {ticker}: {e}")
-                break
-
-        if idx % 50 == 0:
-            print(f"  ...{idx}/{len(tickers)} ({len(frames)} frames so far)")
-
-        # Polite inter-call delay (skip after the last ticker)
-        if idx < len(tickers):
-            time.sleep(delay)
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(_fetch_one_yahoo, t) for t in tickers]
+        for fut in as_completed(futures):
+            t, df = fut.result()
+            done += 1
+            if df is not None:
+                frames[t] = df
+            if done % 50 == 0:
+                print(f"  ...{done}/{len(tickers)} ({len(frames)} frames so far)")
 
     print(f"Download complete. Got {len(frames)}/{len(tickers)} tickers.")
     return frames

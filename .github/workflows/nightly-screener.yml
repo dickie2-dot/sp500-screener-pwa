@@ -1,22 +1,15 @@
 name: Nightly S&P 500 screener
 
 on:
-  # Weekdays at 22:00 UTC (≈ 17:00 ET post-close). Long runs are fine here —
-  # GitHub Actions allows 6h per job.
+  # Weekdays at 22:00 UTC (23:00 BST / 22:00 GMT). Yahoo-based — finishes in ~5 min.
   schedule:
     - cron: "0 22 * * 1-5"
-  # Manual trigger from the Actions tab.
   workflow_dispatch:
-    inputs:
-      rate_delay:
-        description: "Seconds between Polygon calls (default 13 = free tier safe)"
-        required: false
-        default: "13"
 
 jobs:
   screen:
     runs-on: ubuntu-latest
-    timeout-minutes: 300  # up to 5h if Polygon is being slow
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -31,9 +24,7 @@ jobs:
 
       - name: Run screener
         env:
-          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
-          EDGE_CONFIG_ID:  ${{ secrets.EDGE_CONFIG_ID }}
+          EDGE_CONFIG_ID:   ${{ secrets.EDGE_CONFIG_ID }}
           VERCEL_API_TOKEN: ${{ secrets.VERCEL_API_TOKEN }}
-          POLYGON_RATE_DELAY: ${{ github.event.inputs.rate_delay || '13' }}
-          POLYGON_MAX_RETRIES: "5"
+          YAHOO_WORKERS:    "20"
         run: python screener/run.py
