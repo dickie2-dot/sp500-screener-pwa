@@ -1,9 +1,3 @@
 {
-  "outputDirectory": "public",
-  "crons": [
-    {
-      "path": "/api/screen",
-      "schedule": "0 21 * * 1-5"
-    }
-  ]
+  "outputDirectory": "public"
 }
