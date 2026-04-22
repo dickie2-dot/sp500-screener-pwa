@@ -423,6 +423,7 @@
 
 <div id="tab-history" class="tab-panel">
   <div id="backtestContent"></div>
+  <div id="trackRecordContent"></div>
   <div id="watchlistContent"></div>
   <div id="historyContent">
     <div class="loading"><div class="spinner"></div>Loading history…</div>
@@ -506,7 +507,7 @@ function switchTab(tab) {
     document.getElementById('dot-' + t).classList.toggle('active', t === tab);
   });
   if (tab === 'market'  && appData) renderMarket(appData);
-  if (tab === 'history' && appData) { renderBacktest(); renderWatchlist(appData); renderHistory(appData, histMode); }
+  if (tab === 'history' && appData) { renderBacktest(); renderTrackRecord(appData); renderWatchlist(appData); renderHistory(appData, histMode); }
 }
 
 // ── CHARTS ──
@@ -884,6 +885,90 @@ function renderBacktest() {
     </div>`;
 }
 
+// ── LIVE TRACK RECORD ──
+// Reads data.performance_log — an append-only log of every historical pick with
+// realised returns at each matured horizon. Empty / partially empty on day 1;
+// fills in as time passes and horizons mature.
+const TRACK_HORIZONS = [5, 20, 60, 120, 180, 250];  // must match run.py PERF_HORIZONS
+
+function renderTrackRecord(data) {
+  const host = document.getElementById('trackRecordContent');
+  if (!host) return;
+  const log = data && data.performance_log ? data.performance_log : [];
+
+  if (!log.length) {
+    host.innerHTML = `
+      <div class="card card-pad">
+        <div class="hist-hdr">
+          <div><div class="hist-title">Live Track Record</div>
+          <div class="hist-sub">Realised performance of every pick, filled in as horizons mature</div></div>
+          <div class="breadth-tag">LIVE</div>
+        </div>
+        <div class="empty-state">🌱 Tracking starts with today's run.<br>Results at 5d+ will begin filling in as picks age.</div>
+      </div>`;
+    return;
+  }
+
+  // Aggregate per horizon: count of matured cells, avg realised, avg SPY, excess, win %
+  const stats = TRACK_HORIZONS.map((h, hi) => {
+    const matured = log.filter(e => e.r && e.r[hi] != null);
+    if (!matured.length) return { h, matured: 0 };
+    const avg = matured.reduce((a, e) => a + e.r[hi], 0) / matured.length;
+    const spyMatured = matured.filter(e => e.spy_r && e.spy_r[hi] != null);
+    const spyAvg = spyMatured.length
+      ? spyMatured.reduce((a, e) => a + e.spy_r[hi], 0) / spyMatured.length
+      : null;
+    const excess = spyAvg !== null ? avg - spyAvg : null;
+    const wins = matured.filter(e => e.r[hi] > 0).length;
+    return { h, matured: matured.length, avg, spyAvg, excess, win: wins / matured.length * 100 };
+  });
+
+  const earliest = log[0].date;
+  const totalPicks = log.length;
+  const totalMatured = stats.reduce((a, s) => a + (s.matured || 0), 0);
+
+  // Per-horizon rows
+  const rows = stats.map(s => {
+    if (!s.matured) {
+      return `
+        <div class="rf-row">
+          <div><div class="rf-ticker">${s.h}d</div>
+          <div class="rf-name">not yet matured</div></div>
+          <div class="rf-right"><div class="rf-name" style="color:#bbb">—</div></div>
+        </div>`;
+    }
+    const excessStr = s.excess !== null
+      ? `<span style="color:${s.excess>=0?'var(--sage)':'var(--red)'}">${s.excess>=0?'+':''}${s.excess.toFixed(2)}% vs SPY</span>`
+      : '';
+    const avgColor = s.avg >= 0 ? 'up' : 'down';
+    return `
+      <div class="rf-row">
+        <div style="min-width:0;flex:1">
+          <div class="rf-ticker">${s.h}d <span style="font-weight:500;font-size:10px;color:var(--muted)">n=${s.matured} · ${s.win.toFixed(0)}% win</span></div>
+          <div class="rf-name">${excessStr}</div>
+        </div>
+        <div class="rf-right">
+          <div class="rf-change ${avgColor}">${s.avg>=0?'+':''}${s.avg.toFixed(2)}%</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  host.innerHTML = `
+    <div class="card card-pad">
+      <div class="hist-hdr">
+        <div>
+          <div class="hist-title">Live Track Record</div>
+          <div class="hist-sub">${totalPicks} picks logged since ${earliest} · ${totalMatured} horizon cells filled</div>
+        </div>
+        <div class="breadth-tag" style="color:var(--sage)">LIVE</div>
+      </div>
+      ${rows}
+      <div class="picks-disclaimer" style="margin-top:10px">
+        Every nightly run appends new picks and back-fills realised returns for prior picks as each horizon matures. Unlike the backtest above, these are forward-only results — no look-ahead bias.
+      </div>
+    </div>`;
+}
+
 // ── 7-DAY TOP PICKS WATCHLIST ──
 function renderWatchlist(data) {
   const hist = data.top5_history || [];
@@ -1078,7 +1163,7 @@ async function loadData() {
     renderSignals(appData);
     const tab = document.querySelector('.tab-btn.active').id.replace('tab-btn-','');
     if (tab === 'market')  renderMarket(appData);
-    if (tab === 'history') { renderBacktest(); renderWatchlist(appData); renderHistory(appData, histMode); }
+    if (tab === 'history') { renderBacktest(); renderTrackRecord(appData); renderWatchlist(appData); renderHistory(appData, histMode); }
   } catch(e) {
     document.getElementById('signalsContent').innerHTML =
       `<div class="empty-state" style="margin-top:40px">⚠️ Unable to load signals.<br>Check connection.</div>`;

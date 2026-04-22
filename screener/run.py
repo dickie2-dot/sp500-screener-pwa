@@ -299,6 +299,87 @@ def compute_score(ticker, df, hit_type):
         return 0
 
 
+# ─────────────────────────────────────────────────────────────
+# Live performance log — advance-by-one-run bookkeeping
+# ─────────────────────────────────────────────────────────────
+PERF_HORIZONS = [5, 20, 60, 120, 180, 250]
+PERF_LOG_CAP = 1500  # ~300 trading days × 5 picks — stays under Edge Config 512KB item limit
+
+
+def _entry_pos_in_series(df, pick_date_str):
+    """Find the row index in df whose date matches pick_date_str (YYYY-MM-DD).
+    Returns None if not found. df.index is a tz-aware DatetimeIndex (NY, normalized)."""
+    try:
+        target = pd.Timestamp(pick_date_str).date()
+        mask = df.index.date == target
+        if not mask.any():
+            return None
+        matches = df.index[mask]
+        return df.index.get_loc(matches[0])
+    except Exception:
+        return None
+
+
+def update_performance_log(prior_log, today_picks, today_str, frames, spy_df):
+    """Append today's picks (if not already present) and back-fill any newly-
+    reached horizon returns for every entry in the log. Idempotent: reruns on
+    the same day replace today's entries rather than duplicating them.
+    """
+    log = [e for e in prior_log if e.get("date") != today_str]
+
+    # Seed today's picks (with null-filled return arrays)
+    for p in today_picks:
+        log.append({
+            "date":        today_str,
+            "ticker":      p["ticker"],
+            "type":        p.get("type", "unknown"),
+            "score":       p.get("score", 0),
+            "entry_price": p["entry_price"],
+            "r":     [None] * len(PERF_HORIZONS),  # realised stock return at each horizon
+            "spy_r": [None] * len(PERF_HORIZONS),  # SPY baseline over same window
+        })
+
+    # Back-fill any newly-reached horizons for ALL entries (including older ones)
+    filled = 0
+    for entry in log:
+        t = entry["ticker"]
+        if t not in frames:
+            continue
+        df = frames[t]
+        entry_idx = _entry_pos_in_series(df, entry["date"])
+        if entry_idx is None:
+            continue
+        days_held = (len(df) - 1) - entry_idx
+        entry_px  = entry["entry_price"]
+
+        # SPY alignment for same pick date
+        spy_entry_idx = _entry_pos_in_series(spy_df, entry["date"]) if spy_df is not None else None
+
+        for hi, h in enumerate(PERF_HORIZONS):
+            if entry["r"][hi] is not None:
+                continue           # already filled on a previous run
+            if days_held < h:
+                continue           # horizon not yet reached
+            future_idx = entry_idx + h
+            if future_idx >= len(df):
+                continue
+            exit_px = float(df["Close"].iloc[future_idx])
+            entry["r"][hi] = round((exit_px - entry_px) / entry_px * 100, 2)
+            filled += 1
+
+            # SPY baseline over the same window
+            if spy_entry_idx is not None and spy_df is not None:
+                spy_future_idx = spy_entry_idx + h
+                if spy_future_idx < len(spy_df):
+                    spy_entry_px = float(spy_df["Close"].iloc[spy_entry_idx])
+                    spy_exit_px  = float(spy_df["Close"].iloc[spy_future_idx])
+                    entry["spy_r"][hi] = round((spy_exit_px - spy_entry_px) / spy_entry_px * 100, 2)
+
+    print(f"[perf] filled {filled} horizon cells this run")
+    # Cap size (oldest-first); keeps Edge Config item under limit
+    return log[-PERF_LOG_CAP:]
+
+
 def push_to_edge_config(data):
     edge_config_id = os.environ.get("EDGE_CONFIG_ID")
     api_token = os.environ.get("VERCEL_API_TOKEN")
@@ -416,6 +497,13 @@ def main():
     existing = read_existing_from_edge_config()
     prior_history = existing.get("top5_history", []) if isinstance(existing, dict) else []
 
+    # Which category each top-5 pick came from (needed for the live log)
+    turn_set, trend_set = set(turnaround_hits), set(trend_hits)
+    def _type_of(ticker):
+        if ticker in turn_set:  return "turnaround"
+        if ticker in trend_set: return "trend"
+        return "unknown"
+
     today_picks = []
     for t in top5:
         df = frames.get(t)
@@ -426,7 +514,8 @@ def main():
                 today_picks.append({
                     "ticker": t,
                     "entry_price": round(entry_price, 2),
-                    "score": scores.get(t, 0)
+                    "score": scores.get(t, 0),
+                    "type":  _type_of(t),
                 })
             except Exception:
                 pass
@@ -435,6 +524,19 @@ def main():
     new_history = [h for h in prior_history if h.get("date") != today_str]
     new_history.append({"date": today_str, "picks": today_picks})
     new_history = new_history[-7:]
+
+    # ── Live performance log — advance by one run ──
+    # Fetches SPY once for baseline, appends today's picks with empty returns,
+    # back-fills any newly-reached horizon for every prior pick.
+    prior_log = existing.get("performance_log", []) if isinstance(existing, dict) else []
+    _, spy_df = _fetch_one_yahoo("SPY")
+    if spy_df is not None:
+        print(f"[perf] SPY baseline loaded ({len(spy_df)} bars)")
+    performance_log = update_performance_log(
+        prior_log, today_picks, today_str, frames, spy_df
+    )
+    print(f"[perf] log size: {len(performance_log)} picks "
+          f"(earliest: {performance_log[0]['date'] if performance_log else 'n/a'})")
 
     data = {
         "date": today_str,
@@ -448,7 +550,8 @@ def main():
         "top_fallers": top_fallers,
         "scores": scores,
         "top5": top5,
-        "top5_history": new_history
+        "top5_history": new_history,
+        "performance_log": performance_log,
     }
 
     push_to_edge_config(data)
