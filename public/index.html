@@ -236,6 +236,8 @@
     .score-wrap { display: flex; align-items: baseline; gap: 1px; }
     .score-num  { font-size: 30px; font-weight: 800; color: var(--text); line-height: 1; }
     .score-den  { font-size: 13px; font-weight: 400; color: #c0b8ae; }
+    .score-caption { font-size: 7px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-top: 2px; text-align: right; }
+    .picks-disclaimer { font-size: 10px; color: var(--muted); line-height: 1.45; margin: -4px 0 10px; }
 
     .expand-btn {
       color: var(--muted);
@@ -661,7 +663,8 @@ function renderTickerCard(ticker, index, isTop5, type, scores) {
         </div>
         <div class="ticker-right">
           ${score !== null
-            ? `<div class="score-wrap"><span class="score-num">${score}</span><span class="score-den"> /100</span></div>`
+            ? `<div class="score-wrap"><span class="score-num">${score}</span><span class="score-den"> /100</span></div>
+               <div class="score-caption">Setup Fit</div>`
             : ''}
           <div class="expand-btn">▼</div>
         </div>
@@ -710,6 +713,7 @@ function renderSignals(data) {
   // ── TOP PICKS (rank-ordered) — always first, pulled from both categories ──
   if (top5list.length > 0) {
     html += `<div class="sub-label" style="color:var(--sage)">✦ Top Picks</div>`;
+    html += `<div class="picks-disclaimer">Ranked by <strong>Setup Fit</strong> — how closely each stock matches the screener's ideal pattern. Not a buy recommendation or expected-return forecast. Always do your own research.</div>`;
     top5list.forEach((t) => {
       html += renderTickerCard(t, 0, true, categoryOf(t), scores);
     });
