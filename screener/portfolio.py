@@ -133,22 +133,19 @@ def update_portfolio(prior: dict | None, top5: list[str], scores: dict,
     """
     p = prior if isinstance(prior, dict) and prior.get("seed") else _empty_portfolio()
 
-    # Idempotent: if we already ran today, replay from prior day's state would
-    # be complex. Simplest: skip cash-affecting work if last_updated == today,
-    # but still re-mark positions so equity reflects latest prices.
-    already_ran_today = (p.get("last_updated") == today_str)
-
     # 1) Mark every open position to today's price
     open_positions = [_mark_position(pos, frames, today_str) for pos in p["open_positions"]]
 
-    # 2) Close anything that hit expiry or take-profit
+    # 2) Close anything that hit expiry or take-profit. This is naturally
+    # idempotent across same-day reruns: once a position moves to
+    # closed_trades it won't be in open_positions on the next run.
     still_open = []
     cash = float(p["cash"])
     closed = list(p["closed_trades"])
     stats = dict(p["stats"])
     for pos in open_positions:
         reason = _close_reason(pos)
-        if reason and not already_ran_today:
+        if reason:
             cash += pos["mark"]
             closed.append({
                 "ticker": pos["ticker"],
@@ -170,9 +167,12 @@ def update_portfolio(prior: dict | None, top5: list[str], scores: dict,
         else:
             still_open.append(pos)
 
-    # 3) Maybe open a new position (Mon/Thu, not already-ran-today)
+    # 3) Maybe open a new position (Mon/Thu, one per day).
+    # Rerun-safe: if we already opened a position whose opened_on is today,
+    # we skip rather than double-buy.
     weekday = datetime.strptime(today_str, "%Y-%m-%d").weekday()
-    if weekday in TRADE_WEEKDAYS and not already_ran_today:
+    opened_today = any(pos.get("opened_on") == today_str for pos in still_open)
+    if weekday in TRADE_WEEKDAYS and not opened_today:
         held = {pos["ticker"] for pos in still_open}
         for ticker in top5:
             if ticker in held:
