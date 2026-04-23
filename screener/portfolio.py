@@ -36,15 +36,15 @@ MAX_CLOSED_TRADES = 200
 MAX_EQUITY_POINTS = 400
 
 
-def _empty_portfolio(today_str: str) -> dict:
+def _empty_portfolio() -> dict:
     return {
         "seed": SEED_CAPITAL,
         "cash": SEED_CAPITAL,
         "equity": SEED_CAPITAL,
-        "last_updated": today_str,
+        "last_updated": "",     # empty so the first-ever run is not flagged as "already ran today"
         "open_positions": [],
         "closed_trades": [],
-        "equity_curve": [[today_str, SEED_CAPITAL]],
+        "equity_curve": [],
         "stats": {"total_trades": 0, "wins": 0, "losses": 0, "total_pnl": 0.0},
     }
 
@@ -131,7 +131,7 @@ def update_portfolio(prior: dict | None, top5: list[str], scores: dict,
     - frames: {ticker: yahoo df} — used for current_spot and IV estimation
     - today_str: 'YYYY-MM-DD'
     """
-    p = prior if isinstance(prior, dict) and prior.get("seed") else _empty_portfolio(today_str)
+    p = prior if isinstance(prior, dict) and prior.get("seed") else _empty_portfolio()
 
     # Idempotent: if we already ran today, replay from prior day's state would
     # be complex. Simplest: skip cash-affecting work if last_updated == today,
