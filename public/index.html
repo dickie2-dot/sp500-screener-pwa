@@ -406,6 +406,7 @@
     <button class="tab-btn active" id="tab-btn-signals" onclick="switchTab('signals')">Signals</button>
     <button class="tab-btn" id="tab-btn-market"  onclick="switchTab('market')">Market</button>
     <button class="tab-btn" id="tab-btn-history" onclick="switchTab('history')">History</button>
+    <button class="tab-btn" id="tab-btn-portfolio" onclick="switchTab('portfolio')">Portfolio</button>
   </div>
 </header>
 
@@ -430,10 +431,17 @@
   </div>
 </div>
 
+<div id="tab-portfolio" class="tab-panel">
+  <div id="portfolioContent">
+    <div class="loading"><div class="spinner"></div>Loading portfolio…</div>
+  </div>
+</div>
+
 <div class="bottom-nav">
   <div class="nav-dot active" id="dot-signals"></div>
   <div class="nav-dot"        id="dot-market"></div>
   <div class="nav-dot"        id="dot-history"></div>
+  <div class="nav-dot"        id="dot-portfolio"></div>
 </div>
 
 <script>
@@ -501,13 +509,14 @@ function updateScrapeTime(data) {
 
 // ── TABS ──
 function switchTab(tab) {
-  ['signals','market','history'].forEach(t => {
+  ['signals','market','history','portfolio'].forEach(t => {
     document.getElementById('tab-' + t).classList.toggle('active', t === tab);
     document.getElementById('tab-btn-' + t).classList.toggle('active', t === tab);
     document.getElementById('dot-' + t).classList.toggle('active', t === tab);
   });
-  if (tab === 'market'  && appData) renderMarket(appData);
-  if (tab === 'history' && appData) { renderBacktest(); renderTrackRecord(appData); renderWatchlist(appData); renderHistory(appData, histMode); }
+  if (tab === 'market'    && appData) renderMarket(appData);
+  if (tab === 'history'   && appData) { renderBacktest(); renderTrackRecord(appData); renderWatchlist(appData); renderHistory(appData, histMode); }
+  if (tab === 'portfolio' && appData) renderPortfolio(appData);
 }
 
 // ── CHARTS ──
@@ -1164,15 +1173,141 @@ async function loadData() {
     const tab = document.querySelector('.tab-btn.active').id.replace('tab-btn-','');
     if (tab === 'market')  renderMarket(appData);
     if (tab === 'history') { renderBacktest(); renderTrackRecord(appData); renderWatchlist(appData); renderHistory(appData, histMode); }
+    if (tab === 'portfolio') renderPortfolio(appData);
   } catch(e) {
     document.getElementById('signalsContent').innerHTML =
       `<div class="empty-state" style="margin-top:40px">⚠️ Unable to load signals.<br>Check connection.</div>`;
   }
 }
 
+// ── PORTFOLIO (options paper-trading) ──
+function renderPortfolio(data) {
+  const host = document.getElementById('portfolioContent');
+  if (!host) return;
+  const p = data && data.portfolio;
+
+  if (!p || !p.seed) {
+    host.innerHTML = `
+      <div class="card card-pad">
+        <div class="hist-hdr">
+          <div>
+            <div class="hist-title">Options Paper Portfolio</div>
+            <div class="hist-sub">$10,000 seed · 1-2 call buys/week from Top 5 · mark-to-market nightly</div>
+          </div>
+          <div class="breadth-tag">PENDING</div>
+        </div>
+        <div class="empty-state">📈 Portfolio starts with the next nightly run.<br>Rules: Mon + Thu entry, 90 DTE calls ~2% OTM, $500/trade, 2× take-profit.</div>
+        <div class="picks-disclaimer" style="margin-top:10px">
+          Theoretical P&amp;L. BSM pricing with per-ticker realized-vol IV, 3% round-trip slippage, $0.65/contract commission. Tells us whether the stock picks carry alpha once expressed as options — not a broker simulation.
+        </div>
+      </div>`;
+    return;
+  }
+
+  const seed = p.seed;
+  const equity = p.equity;
+  const cash = p.cash;
+  const ret = (equity / seed) - 1;
+  const retColor = ret >= 0 ? 'var(--sage)' : 'var(--red)';
+  const retSign = ret >= 0 ? '+' : '';
+
+  const s = p.stats || { total_trades: 0, wins: 0, losses: 0, total_pnl: 0 };
+  const winRate = s.total_trades ? (s.wins / s.total_trades * 100) : null;
+
+  // Open positions rows
+  const openRows = (p.open_positions || []).map(pos => {
+    const c = pos.pnl >= 0 ? 'up' : 'down';
+    return `
+      <div class="rf-row">
+        <div style="min-width:0;flex:1">
+          <div class="rf-ticker">${pos.ticker} <span style="font-weight:500;font-size:10px;color:var(--muted)">${pos.strike}C · ${pos.dte_remaining}d · ${pos.contracts}x</span></div>
+          <div class="rf-name">entry $${pos.entry_premium} · spot $${pos.current_spot} · mark $${pos.mark.toFixed(0)}</div>
+        </div>
+        <div class="rf-right">
+          <div class="rf-change ${c}">${pos.pnl>=0?'+':''}${(pos.pnl_pct*100).toFixed(1)}%</div>
+        </div>
+      </div>`;
+  }).join('') || `<div class="empty-state" style="padding:14px 0">No open positions.</div>`;
+
+  // Last few closed trades
+  const recent = (p.closed_trades || []).slice(-5).reverse();
+  const closedRows = recent.map(t => {
+    const c = t.pnl >= 0 ? 'up' : 'down';
+    return `
+      <div class="rf-row">
+        <div style="min-width:0;flex:1">
+          <div class="rf-ticker">${t.ticker} <span style="font-weight:500;font-size:10px;color:var(--muted)">${t.close_reason} · ${t.opened_on}</span></div>
+          <div class="rf-name">cost $${t.cost.toFixed(0)} → $${t.proceeds.toFixed(0)}</div>
+        </div>
+        <div class="rf-right">
+          <div class="rf-change ${c}">${t.pnl>=0?'+':''}${(t.pnl_pct*100).toFixed(1)}%</div>
+        </div>
+      </div>`;
+  }).join('') || `<div class="empty-state" style="padding:14px 0">No trades closed yet.</div>`;
+
+  host.innerHTML = `
+    <div class="card card-pad">
+      <div class="hist-hdr">
+        <div>
+          <div class="hist-title">Options Paper Portfolio</div>
+          <div class="hist-sub">Theoretical P&amp;L · 90 DTE calls · Mon/Thu entries · last update ${p.last_updated || '—'}</div>
+        </div>
+        <div class="breadth-tag" style="color:${retColor}">${retSign}${(ret*100).toFixed(1)}%</div>
+      </div>
+
+      <div class="rf-row">
+        <div><div class="rf-ticker">Equity</div><div class="rf-name">cash $${cash.toFixed(0)} + mark</div></div>
+        <div class="rf-right"><div class="rf-change ${ret>=0?'up':'down'}">$${equity.toFixed(0)}</div></div>
+      </div>
+      <div class="rf-row">
+        <div><div class="rf-ticker">Total P&amp;L</div><div class="rf-name">${s.total_trades} closed · ${winRate===null?'—':winRate.toFixed(0)+'% win'}</div></div>
+        <div class="rf-right"><div class="rf-change ${s.total_pnl>=0?'up':'down'}">${s.total_pnl>=0?'+':''}$${s.total_pnl.toFixed(0)}</div></div>
+      </div>
+
+      <canvas id="equityChart" height="150" style="margin:14px 0"></canvas>
+
+      <div class="hist-title" style="margin-top:16px">Open Positions</div>
+      ${openRows}
+
+      <div class="hist-title" style="margin-top:16px">Recently Closed</div>
+      ${closedRows}
+
+      <div class="picks-disclaimer" style="margin-top:10px">
+        Black-Scholes pricing with per-ticker realized-vol IV (floored 20%, capped 80%), 3% slippage each way, $0.65/contract. Closes on expiry or at 2× cost (take-profit). Shows whether the picks carry alpha once expressed as leveraged calls.
+      </div>
+    </div>`;
+
+  // Equity curve
+  const curve = p.equity_curve || [];
+  if (curve.length > 1 && window.Chart) {
+    destroyChart('equity');
+    const ctx = document.getElementById('equityChart');
+    chartInstances['equity'] = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: curve.map(pt => pt[0]),
+        datasets: [{
+          data: curve.map(pt => pt[1]),
+          borderColor: 'var(--sage)'.replace('var(--sage)', '#6b8f6b'),
+          backgroundColor: 'rgba(107,143,107,0.10)',
+          borderWidth: 2, fill: true, tension: 0.25, pointRadius: 0,
+        }]
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { display: false },
+          y: { ticks: { callback: v => '$' + v }, grid: { color: '#eee' } }
+        },
+        maintainAspectRatio: false,
+      }
+    });
+  }
+}
+
 // ── SWIPE ──
 (function(){
-  const tabs = ['signals','market','history'];
+  const tabs = ['signals','market','history','portfolio'];
   let sx = 0, sy = 0;
   document.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, {passive:true});
   document.addEventListener('touchend', e => {

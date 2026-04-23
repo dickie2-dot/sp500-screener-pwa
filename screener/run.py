@@ -538,6 +538,20 @@ def main():
     print(f"[perf] log size: {len(performance_log)} picks "
           f"(earliest: {performance_log[0]['date'] if performance_log else 'n/a'})")
 
+    # ── Options paper-trading portfolio — advance one day ──
+    try:
+        from portfolio import update_portfolio
+        hit_types = {t: _type_of(t) for t in top5}
+        prior_portfolio = existing.get("portfolio") if isinstance(existing, dict) else None
+        portfolio = update_portfolio(
+            prior_portfolio, top5, scores, hit_types, frames, today_str
+        )
+        print(f"[port] equity=${portfolio['equity']:.0f} cash=${portfolio['cash']:.0f} "
+              f"open={len(portfolio['open_positions'])} closed={len(portfolio['closed_trades'])}")
+    except Exception as e:
+        print(f"[port] update failed: {e!r} — preserving prior state")
+        portfolio = existing.get("portfolio") if isinstance(existing, dict) else None
+
     data = {
         "date": today_str,
         "last_scraped": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
@@ -552,6 +566,7 @@ def main():
         "top5": top5,
         "top5_history": new_history,
         "performance_log": performance_log,
+        "portfolio": portfolio,
     }
 
     push_to_edge_config(data)
