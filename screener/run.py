@@ -525,6 +525,29 @@ def main():
     new_history.append({"date": today_str, "picks": today_picks})
     new_history = new_history[-7:]
 
+    # ── All-time pick counts (survives the 7-day window) ──
+    # Rebuilt from scratch each run so it stays consistent: scan every
+    # top-5 that has ever appeared in performance_log (the append-only
+    # record), then add today's top-5 to get a total count per ticker.
+    prior_counts = existing.get("pick_counts", {}) if isinstance(existing, dict) else {}
+    pick_counts = dict(prior_counts) if isinstance(prior_counts, dict) else {}
+    # If we've never built counts, seed from performance_log entries that
+    # predate today (guarantees consistent totals even after a schema bump).
+    if not pick_counts:
+        prior_log_for_counts = existing.get("performance_log", []) if isinstance(existing, dict) else []
+        for e in prior_log_for_counts:
+            t = e.get("ticker")
+            if t:
+                pick_counts[t] = pick_counts.get(t, 0) + 1
+    # Rerun-safe: only increment once per ticker per day. Use today's entries
+    # in the performance_log as the source of truth (they're written just
+    # above and are idempotent on reruns).
+    today_tickers = {e["ticker"] for e in performance_log if e.get("date") == today_str}
+    already_counted_today = existing.get("pick_counts_date") == today_str if isinstance(existing, dict) else False
+    if not already_counted_today:
+        for t in today_tickers:
+            pick_counts[t] = pick_counts.get(t, 0) + 1
+
     # ── Live performance log — advance by one run ──
     # Fetches SPY once for baseline, appends today's picks with empty returns,
     # back-fills any newly-reached horizon for every prior pick.
@@ -566,6 +589,8 @@ def main():
         "top5": top5,
         "top5_history": new_history,
         "performance_log": performance_log,
+        "pick_counts": pick_counts,
+        "pick_counts_date": today_str,
         "portfolio": portfolio,
     }
 

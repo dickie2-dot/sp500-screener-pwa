@@ -984,8 +984,10 @@ function renderWatchlist(data) {
   const host = document.getElementById('watchlistContent');
   if (!host) return;
 
-  // Aggregate picks by ticker: count appearances, keep earliest entry (entry_price + date),
-  // track most recent date to show staleness.
+  // Aggregate picks by ticker across the 7-day window for entry price/dates.
+  // Count itself comes from the all-time pick_counts blob when available,
+  // so a ticker's badge doesn't decay when older picks age out of the window.
+  const allTime = (data && data.pick_counts) || {};
   const seen = {};
   for (const day of hist) {
     if (!day.picks) continue;
@@ -996,13 +998,17 @@ function renderWatchlist(data) {
           entry_price: p.entry_price,
           entry_date: day.date,
           last_date: day.date,
-          count: 1
+          window_count: 1
         };
       } else {
-        seen[p.ticker].count += 1;
-        seen[p.ticker].last_date = day.date; // history is chronological
+        seen[p.ticker].window_count += 1;
+        seen[p.ticker].last_date = day.date;
       }
     }
+  }
+  // Attach count (all-time when present, else 7-day window)
+  for (const k of Object.keys(seen)) {
+    seen[k].count = allTime[k] || seen[k].window_count;
   }
   const items = Object.values(seen).sort((a, b) => b.count - a.count);
 
