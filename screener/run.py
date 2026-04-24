@@ -539,14 +539,15 @@ def main():
             t = e.get("ticker")
             if t:
                 pick_counts[t] = pick_counts.get(t, 0) + 1
-    # Rerun-safe: only increment once per ticker per day. Use today's entries
-    # in the performance_log as the source of truth (they're written just
-    # above and are idempotent on reruns).
-    today_tickers = {e["ticker"] for e in performance_log if e.get("date") == today_str}
-    already_counted_today = existing.get("pick_counts_date") == today_str if isinstance(existing, dict) else False
+    # Rerun-safe: only increment once per ticker per day. Source is today_picks
+    # (the top-5 we just selected), guarded by pick_counts_date.
+    already_counted_today = (isinstance(existing, dict)
+                             and existing.get("pick_counts_date") == today_str)
     if not already_counted_today:
-        for t in today_tickers:
-            pick_counts[t] = pick_counts.get(t, 0) + 1
+        for p in today_picks:
+            t = p.get("ticker")
+            if t:
+                pick_counts[t] = pick_counts.get(t, 0) + 1
 
     # ── Live performance log — advance by one run ──
     # Fetches SPY once for baseline, appends today's picks with empty returns,
