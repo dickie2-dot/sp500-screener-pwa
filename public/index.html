@@ -1270,7 +1270,9 @@ function renderPortfolio(data) {
         <div class="rf-right"><div class="rf-change ${s.total_pnl>=0?'up':'down'}">${s.total_pnl>=0?'+':''}$${s.total_pnl.toFixed(0)}</div></div>
       </div>
 
-      <canvas id="equityChart" height="150" style="margin:14px 0"></canvas>
+      <div style="position:relative;height:160px;margin:14px 0">
+        <canvas id="equityChart"></canvas>
+      </div>
 
       <div class="hist-title" style="margin-top:16px">Open Positions</div>
       ${openRows}
