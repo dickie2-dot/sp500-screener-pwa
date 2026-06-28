@@ -380,26 +380,45 @@ def update_performance_log(prior_log, today_picks, today_str, frames, spy_df):
     return log[-PERF_LOG_CAP:]
 
 
-def push_to_edge_config(data):
+def push_to_blob(data):
+    """Upload JSON to Vercel Blob — no size limit on Hobby plan (500 MB free).
+    Uses x-add-random-suffix:0 so the pathname stays stable across runs."""
+    token = os.environ.get("BLOB_READ_WRITE_TOKEN")
+    if not token:
+        print("[blob] BLOB_READ_WRITE_TOKEN not set — skipping blob push")
+        return None
+    r = requests.put(
+        "https://blob.vercel-storage.com/screener_results.json",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "x-add-random-suffix": "0",
+        },
+        data=json.dumps(data).encode(),
+        timeout=30,
+    )
+    if r.status_code in (200, 201):
+        blob_url = r.json().get("url")
+        print(f"[blob] uploaded → {blob_url}")
+        return blob_url
+    print(f"[blob] upload failed: {r.status_code} {r.text[:300]}")
+    return None
+
+
+def update_edge_config_url(blob_url):
+    """Store just the blob URL in Edge Config — a ~100-char string that stays
+    well within the Hobby plan's 8 KB store limit."""
     edge_config_id = os.environ.get("EDGE_CONFIG_ID")
     api_token = os.environ.get("VERCEL_API_TOKEN")
+    if not edge_config_id or not api_token or not blob_url:
+        return
     url = f"https://api.vercel.com/v1/edge-config/{edge_config_id}/items"
-    headers = {
+    r = requests.patch(url, headers={
         "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "items": [
-            {
-                "operation": "upsert",
-                "key": "screener_results",
-                "value": data
-            }
-        ]
-    }
-    r = requests.patch(url, headers=headers, json=payload)
-    print(f"Edge Config write status: {r.status_code}")
-    return r.status_code
+        "Content-Type": "application/json",
+    }, json={"items": [{"operation": "upsert", "key": "screener_blob_url", "value": blob_url}]},
+        timeout=10)
+    print(f"[edge-config] URL pointer write: {r.status_code}")
 
 
 def main():
@@ -595,7 +614,8 @@ def main():
         "portfolio": portfolio,
     }
 
-    push_to_edge_config(data)
+    blob_url = push_to_blob(data)
+    update_edge_config_url(blob_url)
 
 
 if __name__ == "__main__":
